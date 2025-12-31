@@ -19,6 +19,7 @@ const elements = {
   statusLine: document.getElementById("statusLine"),
   sessionMeta: document.getElementById("sessionMeta"),
   runSelect: document.getElementById("runSelect"),
+  downloadSummary: document.getElementById("downloadSummary"),
   runMetrics: document.getElementById("runMetrics"),
   summaryText: document.getElementById("summaryText"),
   qualityMetrics: document.getElementById("qualityMetrics"),
@@ -641,6 +642,7 @@ function renderBundle(bundle) {
   renderParagraphs(bundle.summary, bundle.run_status);
   renderQuality(bundle);
   renderDiagnostics(bundle);
+  updateDownload(bundle);
   renderArtifacts(bundle.artifacts || []);
   renderThreads(bundle.threads || []);
   renderScenes(bundle.scenes || []);
@@ -648,6 +650,50 @@ function renderBundle(bundle) {
   renderQuotes(bundle.quotes || []);
   renderEntities(bundle.entities || []);
   renderTimeline(bundle.scenes || [], bundle.events || []);
+}
+
+function updateDownload(bundle) {
+  const button = elements.downloadSummary;
+  if (!button) return;
+  button.disabled = true;
+  button.dataset.mode = "";
+  button.dataset.href = "";
+  button.dataset.filename = "";
+
+  if (!bundle) {
+    button.textContent = "Download Summary";
+    return;
+  }
+
+  const artifacts = bundle.artifacts || [];
+  const docx = artifacts.find((item) => item.kind === "summary_docx");
+  const txt = artifacts.find((item) => item.kind === "summary_txt");
+  if (docx) {
+    button.textContent = "Download DOCX";
+    button.dataset.mode = "artifact";
+    button.dataset.href = `/artifacts/${docx.id}`;
+    button.dataset.filename = "summary.docx";
+    button.disabled = false;
+    return;
+  }
+  if (txt) {
+    button.textContent = "Download TXT";
+    button.dataset.mode = "artifact";
+    button.dataset.href = `/artifacts/${txt.id}`;
+    button.dataset.filename = "summary.txt";
+    button.disabled = false;
+    return;
+  }
+  if (bundle.summary) {
+    const session = state.sessionMap[state.selectedSession] || {};
+    const slug = session.slug || "summary";
+    button.textContent = "Download TXT";
+    button.dataset.mode = "inline";
+    button.dataset.filename = `${slug}.summary.txt`;
+    button.disabled = false;
+  } else {
+    button.textContent = "Download Summary";
+  }
 }
 
 async function loadCampaigns() {
@@ -1119,6 +1165,32 @@ async function init() {
     state.selectedRun = runId;
     if (state.selectedSession) {
       await loadBundle(state.selectedSession, runId);
+    }
+  });
+  elements.downloadSummary.addEventListener("click", () => {
+    const mode = elements.downloadSummary.dataset.mode;
+    if (!mode || elements.downloadSummary.disabled) {
+      return;
+    }
+    if (mode === "artifact") {
+      const href = elements.downloadSummary.dataset.href;
+      if (href) {
+        window.open(href, "_blank");
+      }
+      return;
+    }
+    if (mode === "inline") {
+      const text = (state.bundle && state.bundle.summary) || "";
+      if (!text) return;
+      const blob = new Blob([text], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = elements.downloadSummary.dataset.filename || "summary.txt";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
     }
   });
 

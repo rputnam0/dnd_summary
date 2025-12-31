@@ -343,6 +343,29 @@ button:hover {
   min-width: 180px;
 }
 
+.button {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(207, 174, 88, 0.5);
+  background: rgba(23, 18, 12, 0.8);
+  color: var(--gold-soft);
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(207, 174, 88, 0.9);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  transform: none;
+}
+
 .summary-text p {
   margin: 0 0 12px;
   line-height: 1.6;
