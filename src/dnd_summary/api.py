@@ -1180,6 +1180,18 @@ def get_summary(
             .order_by(SessionExtraction.created_at.desc())
             .first()
         )
+        persist_metrics = (
+            session.query(SessionExtraction)
+            .filter_by(session_id=session_id, run_id=resolved_run_id, kind="persist_metrics")
+            .order_by(SessionExtraction.created_at.desc())
+            .first()
+        )
+        quality_report = (
+            session.query(SessionExtraction)
+            .filter_by(session_id=session_id, run_id=resolved_run_id, kind="quality_report")
+            .order_by(SessionExtraction.created_at.desc())
+            .first()
+        )
         if not summary:
             raise HTTPException(status_code=404, detail="Summary not found")
         return {"text": summary.payload.get("text", "")}
@@ -1409,6 +1421,8 @@ def get_session_bundle(
             "run_status": run.status if run else None,
             "run_created_at": run.created_at.isoformat() if run else None,
             "summary": summary.payload.get("text", "") if summary else "",
+            "metrics": persist_metrics.payload if persist_metrics else None,
+            "quality": quality_report.payload if quality_report else None,
             "artifacts": [
                 {
                     "id": a.id,

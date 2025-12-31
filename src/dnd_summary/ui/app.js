@@ -21,6 +21,7 @@ const elements = {
   runSelect: document.getElementById("runSelect"),
   runMetrics: document.getElementById("runMetrics"),
   summaryText: document.getElementById("summaryText"),
+  qualityMetrics: document.getElementById("qualityMetrics"),
   artifactLinks: document.getElementById("artifactLinks"),
   threadList: document.getElementById("threadList"),
   sceneList: document.getElementById("sceneList"),
@@ -127,6 +128,36 @@ function renderMetrics(bundle) {
     const badge = document.createElement("span");
     badge.textContent = metric;
     elements.runMetrics.appendChild(badge);
+  });
+}
+
+function renderQuality(bundle) {
+  clearNode(elements.qualityMetrics);
+  if (!bundle || !bundle.quality) {
+    return;
+  }
+  const quality = bundle.quality || {};
+  const metrics = [
+    ["Mentions missing evidence", quality.mentions_missing_evidence],
+    ["Scenes missing evidence", quality.scenes_missing_evidence],
+    ["Events missing evidence", quality.events_missing_evidence],
+    ["Threads missing evidence", quality.threads_missing_evidence],
+    ["Thread updates missing evidence", quality.thread_updates_missing_evidence],
+  ];
+  const title = document.createElement("h3");
+  title.textContent = "Quality Checks";
+  elements.qualityMetrics.appendChild(title);
+  metrics.forEach(([label, value]) => {
+    if (value == null) return;
+    const row = document.createElement("div");
+    row.className = "quality-row";
+    const name = document.createElement("span");
+    name.textContent = label;
+    const count = document.createElement("strong");
+    count.textContent = String(value);
+    row.appendChild(name);
+    row.appendChild(count);
+    elements.qualityMetrics.appendChild(row);
   });
 }
 
@@ -543,6 +574,7 @@ function renderBundle(bundle) {
   }
   renderMetrics(bundle);
   renderParagraphs(bundle.summary, bundle.run_status);
+  renderQuality(bundle);
   renderArtifacts(bundle.artifacts || []);
   renderThreads(bundle.threads || []);
   renderScenes(bundle.scenes || []);
