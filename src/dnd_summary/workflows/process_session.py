@@ -20,61 +20,74 @@ class ProcessSessionWorkflow:
             payload,
             start_to_close_timeout=timedelta(seconds=60),
         )
-        extraction = await workflow.execute_activity(
-            "extract_session_facts_activity",
-            {
-                "run_id": transcript["run_id"],
-                "session_id": transcript["session_id"],
-            },
-            start_to_close_timeout=timedelta(minutes=10),
-        )
-        persisted = await workflow.execute_activity(
-            "persist_session_facts_activity",
-            {
-                "run_id": transcript["run_id"],
-                "session_id": transcript["session_id"],
-            },
-            start_to_close_timeout=timedelta(minutes=2),
-        )
-        resolved = await workflow.execute_activity(
-            "resolve_entities_activity",
-            {
-                "run_id": transcript["run_id"],
-                "session_id": transcript["session_id"],
-            },
-            start_to_close_timeout=timedelta(minutes=2),
-        )
-        plan = await workflow.execute_activity(
-            "plan_summary_activity",
-            {
-                "run_id": transcript["run_id"],
-                "session_id": transcript["session_id"],
-            },
-            start_to_close_timeout=timedelta(minutes=10),
-        )
-        summary = await workflow.execute_activity(
-            "write_summary_activity",
-            {
-                "run_id": transcript["run_id"],
-                "session_id": transcript["session_id"],
-            },
-            start_to_close_timeout=timedelta(minutes=10),
-        )
-        docx = await workflow.execute_activity(
-            "render_summary_docx_activity",
-            {
-                "run_id": transcript["run_id"],
-                "session_id": transcript["session_id"],
-            },
-            start_to_close_timeout=timedelta(minutes=2),
-        )
-        return {
-            "status": "ok",
-            "ingest": transcript,
-            "extract": extraction,
-            "persist": persisted,
-            "resolve": resolved,
-            "plan": plan,
-            "summary": summary,
-            "docx": docx,
-        }
+        try:
+            extraction = await workflow.execute_activity(
+                "extract_session_facts_activity",
+                {
+                    "run_id": transcript["run_id"],
+                    "session_id": transcript["session_id"],
+                },
+                start_to_close_timeout=timedelta(minutes=10),
+            )
+            persisted = await workflow.execute_activity(
+                "persist_session_facts_activity",
+                {
+                    "run_id": transcript["run_id"],
+                    "session_id": transcript["session_id"],
+                },
+                start_to_close_timeout=timedelta(minutes=2),
+            )
+            resolved = await workflow.execute_activity(
+                "resolve_entities_activity",
+                {
+                    "run_id": transcript["run_id"],
+                    "session_id": transcript["session_id"],
+                },
+                start_to_close_timeout=timedelta(minutes=2),
+            )
+            plan = await workflow.execute_activity(
+                "plan_summary_activity",
+                {
+                    "run_id": transcript["run_id"],
+                    "session_id": transcript["session_id"],
+                },
+                start_to_close_timeout=timedelta(minutes=10),
+            )
+            summary = await workflow.execute_activity(
+                "write_summary_activity",
+                {
+                    "run_id": transcript["run_id"],
+                    "session_id": transcript["session_id"],
+                },
+                start_to_close_timeout=timedelta(minutes=10),
+            )
+            docx = await workflow.execute_activity(
+                "render_summary_docx_activity",
+                {
+                    "run_id": transcript["run_id"],
+                    "session_id": transcript["session_id"],
+                },
+                start_to_close_timeout=timedelta(minutes=2),
+            )
+            await workflow.execute_activity(
+                "update_run_status_activity",
+                {"run_id": transcript["run_id"], "status": "completed"},
+                start_to_close_timeout=timedelta(minutes=1),
+            )
+            return {
+                "status": "ok",
+                "ingest": transcript,
+                "extract": extraction,
+                "persist": persisted,
+                "resolve": resolved,
+                "plan": plan,
+                "summary": summary,
+                "docx": docx,
+            }
+        except Exception:
+            await workflow.execute_activity(
+                "update_run_status_activity",
+                {"run_id": transcript["run_id"], "status": "failed"},
+                start_to_close_timeout=timedelta(minutes=1),
+            )
+            raise

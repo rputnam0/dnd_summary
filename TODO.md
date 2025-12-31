@@ -16,9 +16,6 @@
    - If evidence gaps persist, add a targeted LLM repair activity for missing spans.  
    - Gate by feature flag to keep costs low.
 
-3) Add LLM retry/backoff policy (429 + transient errors)  
-   - Keep provenance for failed attempts; return a clear error to the workflow.
-
 ## Recently completed
 - Entity-centric API endpoints (`/entities/{entity_id}/mentions|quotes|events`)
 - Session bundle endpoint (`/sessions/{session_id}/bundle`) for UI call reduction
@@ -30,6 +27,8 @@
 - Speakers list added to extraction prompt; mentions checklist tightened
 - Quote merge threshold adjusted + prompt updates to avoid DM narration
 - Quote dedupe in persist step + quote fallback threshold raised
+- Run status updates (completed/failed) + API prefers completed runs
+- LLM retry/backoff for 429/5xx errors
 
 ## Mid-term
 - Add correction loop (rename/merge entities, mark false positives, lock canonical names).  

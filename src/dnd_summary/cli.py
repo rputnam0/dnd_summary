@@ -55,6 +55,7 @@ def run_session_local(campaign_slug: str, session_slug: str) -> None:
     from dnd_summary.activities.extract import extract_session_facts_activity
     from dnd_summary.activities.persist import persist_session_facts_activity
     from dnd_summary.activities.resolve import resolve_entities_activity
+    from dnd_summary.activities.run_status import update_run_status_activity
     from dnd_summary.activities.summary import (
         plan_summary_activity,
         render_summary_docx_activity,
@@ -69,12 +70,21 @@ def run_session_local(campaign_slug: str, session_slug: str) -> None:
             "run_id": transcript["run_id"],
             "session_id": transcript["session_id"],
         }
-        await extract_session_facts_activity(extract_payload)
-        await persist_session_facts_activity(extract_payload)
-        await resolve_entities_activity(extract_payload)
-        await plan_summary_activity(extract_payload)
-        await write_summary_activity(extract_payload)
-        await render_summary_docx_activity(extract_payload)
+        try:
+            await extract_session_facts_activity(extract_payload)
+            await persist_session_facts_activity(extract_payload)
+            await resolve_entities_activity(extract_payload)
+            await plan_summary_activity(extract_payload)
+            await write_summary_activity(extract_payload)
+            await render_summary_docx_activity(extract_payload)
+            await update_run_status_activity(
+                {"run_id": transcript["run_id"], "status": "completed"}
+            )
+        except Exception:
+            await update_run_status_activity(
+                {"run_id": transcript["run_id"], "status": "failed"}
+            )
+            raise
 
     asyncio.run(_run())
 

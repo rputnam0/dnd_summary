@@ -867,15 +867,18 @@ def _resolve_run_id(session, session_id: str, run_id: str | None) -> str:
         if not run:
             raise HTTPException(status_code=404, detail="Run not found for session")
         return run.id
-    run = (
+    runs = (
         session.query(Run)
         .filter_by(session_id=session_id)
         .order_by(Run.created_at.desc())
-        .first()
+        .all()
     )
-    if not run:
+    if not runs:
         raise HTTPException(status_code=404, detail="Run not found for session")
-    return run.id
+    for run in runs:
+        if run.status == "completed":
+            return run.id
+    return runs[0].id
 
 
 def _latest_run_ids_for_campaign(session, campaign_id: str) -> set[str]:
@@ -886,9 +889,17 @@ def _latest_run_ids_for_campaign(session, campaign_id: str) -> set[str]:
         .all()
     )
     latest_by_session: dict[str, str] = {}
+    fallback_by_session: dict[str, str] = {}
     for run in runs:
+        if run.session_id not in fallback_by_session:
+            fallback_by_session[run.session_id] = run.id
+        if run.status != "completed":
+            continue
         if run.session_id not in latest_by_session:
             latest_by_session[run.session_id] = run.id
+    for session_id, run_id in fallback_by_session.items():
+        if session_id not in latest_by_session:
+            latest_by_session[session_id] = run_id
     return set(latest_by_session.values())
 
 

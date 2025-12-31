@@ -17,6 +17,10 @@ class Settings(BaseSettings):
 
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3-flash"
+    llm_max_retries: int = 3
+    llm_retry_min_seconds: float = 1.0
+    llm_retry_max_seconds: float = 12.0
+    llm_retry_backoff: float = 2.0
     min_quotes: int = 6
     max_quotes: int = 12
     min_events: int = 8
