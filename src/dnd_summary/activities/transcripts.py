@@ -205,6 +205,17 @@ async def ingest_transcript_activity(payload: dict) -> dict:
             session.add(session_obj)
             session.flush()
 
+        existing_run = (
+            session.query(Run)
+            .filter_by(session_id=session_obj.id, transcript_hash=transcript_hash)
+            .first()
+        )
+        existing_count = (
+            session.query(Utterance)
+            .filter_by(session_id=session_obj.id)
+            .count()
+        )
+
         run = Run(
             campaign_id=campaign.id,
             session_id=session_obj.id,
@@ -232,18 +243,28 @@ async def ingest_transcript_activity(payload: dict) -> dict:
                     session.flush()
                 participants[speaker_display] = participant
 
-        utterance_rows = [
-            Utterance(
-                session_id=session_obj.id,
-                participant_id=participants[alias_map.get(utt.speaker, utt.speaker)].id,
-                start_ms=utt.start_ms,
-                end_ms=utt.end_ms,
-                speaker_raw=utt.speaker_raw or utt.speaker,
-                text=utt.text,
-            )
-            for utt in utterances
-        ]
-        session.add_all(utterance_rows)
+        utterances_reused = False
+        utterances_deleted = 0
+        if existing_count and existing_run:
+            utterances_reused = True
+        else:
+            if existing_count:
+                utterances_deleted = existing_count
+                session.query(Utterance).filter_by(
+                    session_id=session_obj.id
+                ).delete(synchronize_session=False)
+            utterance_rows = [
+                Utterance(
+                    session_id=session_obj.id,
+                    participant_id=participants[alias_map.get(utt.speaker, utt.speaker)].id,
+                    start_ms=utt.start_ms,
+                    end_ms=utt.end_ms,
+                    speaker_raw=utt.speaker_raw or utt.speaker,
+                    text=utt.text,
+                )
+                for utt in utterances
+            ]
+            session.add_all(utterance_rows)
 
         run.status = "completed"
         run.finished_at = datetime.utcnow()
@@ -254,6 +275,8 @@ async def ingest_transcript_activity(payload: dict) -> dict:
         "session_slug": session_slug,
         "transcript": src.__dict__,
         "utterances": len(utterances),
+        "utterances_reused": utterances_reused,
+        "utterances_deleted": utterances_deleted,
         "transcript_hash": transcript_hash,
         "run_id": run.id,
         "session_id": session_obj.id,

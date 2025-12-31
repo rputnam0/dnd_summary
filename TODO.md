@@ -36,10 +36,14 @@
 - Partial run status for summary failures + UI messaging
 - Run diagnostics panel (metrics + LLM calls)
 - Explicit transcript cache support + token usage logging
+- Idempotent transcript ingest for re-runs (reuse or replace utterances)
+- Summary quote validation tightened to enforce quote bank grounding
+- Mention span repair regex fixed for multi-token mentions
 
 ## Mid-term
 - Add correction loop (rename/merge entities, mark false positives, lock canonical names).  
-- Add Postgres search indexes + rank (GIN/TSVECTOR) and return score in API.  
+- Add Postgres search indexes + rank (GIN/TSVECTOR) and return score in API.
+- Add Gemini Embeddings and incorporate symantic search over the campaing for a proper RAG database.  
 - Add eval dashboard output (CSV + summary tables) to track prompt versions over time.
 
 ## Later

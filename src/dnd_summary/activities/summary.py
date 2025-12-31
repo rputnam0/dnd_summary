@@ -116,13 +116,13 @@ def _validate_summary_quotes(summary_text: str, quote_texts: list[str]) -> None:
         return re.sub(r"[*_`]+", "", text).strip()
 
     allowed = {_clean(q) for q in quote_texts}
+    missing = []
     for q in quoted:
         cleaned = _clean(q)
-        if len(cleaned) >= 25 and not any(cleaned in full for full in allowed):
-            return
-
-    # All detected quotes are short or covered by the allowed set.
-    return
+        if cleaned not in allowed:
+            missing.append(cleaned)
+    if missing:
+        raise ValueError("Summary contains quotes not in quote bank.")
 
 
 @activity.defn

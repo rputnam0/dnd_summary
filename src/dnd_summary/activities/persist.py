@@ -57,7 +57,7 @@ def _build_mention_pattern(text: str) -> re.Pattern | None:
         return None
     if len(tokens) == 1:
         return re.compile(re.escape(tokens[0]), re.IGNORECASE)
-    pattern = r"\\b" + r"\\W+".join(re.escape(token) for token in tokens) + r"\\b"
+    pattern = r"\b" + r"\W+".join(re.escape(token) for token in tokens) + r"\b"
     return re.compile(pattern, re.IGNORECASE)
 
 
