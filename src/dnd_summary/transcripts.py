@@ -65,7 +65,7 @@ def parse_jsonl(path: Path) -> list[ParsedUtterance]:
 
 def parse_txt(path: Path) -> list[ParsedUtterance]:
     utterances: list[ParsedUtterance] = []
-    ts_re = re.compile(r"\d{2}:\d{2}:\d{2}")
+    ts_re = re.compile(r"\d{1,2}:\d{2}:\d{2}")
     with path.open("r", encoding="utf-8") as handle:
         for raw in handle:
             raw = raw.strip()
@@ -74,11 +74,26 @@ def parse_txt(path: Path) -> list[ParsedUtterance]:
             match = ts_re.search(raw)
             if not match:
                 raise ValueError(f"Invalid TXT transcript line: {raw}")
-            speaker = raw[: match.start()].strip()
-            text = raw[match.end() :].strip()
+
+            speaker = ""
+            text = ""
+            if match.start() == 0:
+                rest = raw[match.end() :].lstrip()
+                if rest.startswith(":"):
+                    rest = rest[1:].lstrip()
+                if ":" in rest:
+                    speaker, text = [part.strip() for part in rest.split(":", 1)]
+                else:
+                    text = rest.strip()
+            else:
+                speaker = raw[: match.start()].strip()
+                text = raw[match.end() :].strip()
+
             start_ms = _parse_timecode(match.group(0))
-            if not speaker or not text:
+            if not text:
                 raise ValueError(f"Invalid TXT transcript line: {raw}")
+            if not speaker:
+                speaker = "unknown"
             utterances.append(
                 ParsedUtterance(
                     speaker=speaker or "unknown",

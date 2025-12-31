@@ -50,6 +50,36 @@ def run_session(campaign_slug: str, session_slug: str) -> None:
 
 
 @app.command()
+def run_session_local(campaign_slug: str, session_slug: str) -> None:
+    """Run the pipeline locally without Temporal (for quick testing)."""
+    from dnd_summary.activities.extract import extract_session_facts_activity
+    from dnd_summary.activities.persist import persist_session_facts_activity
+    from dnd_summary.activities.resolve import resolve_entities_activity
+    from dnd_summary.activities.summary import (
+        plan_summary_activity,
+        render_summary_docx_activity,
+        write_summary_activity,
+    )
+    from dnd_summary.activities.transcripts import ingest_transcript_activity
+
+    async def _run() -> None:
+        payload = {"campaign_slug": campaign_slug, "session_slug": session_slug}
+        transcript = await ingest_transcript_activity(payload)
+        extract_payload = {
+            "run_id": transcript["run_id"],
+            "session_id": transcript["session_id"],
+        }
+        await extract_session_facts_activity(extract_payload)
+        await persist_session_facts_activity(extract_payload)
+        await resolve_entities_activity(extract_payload)
+        await plan_summary_activity(extract_payload)
+        await write_summary_activity(extract_payload)
+        await render_summary_docx_activity(extract_payload)
+
+    asyncio.run(_run())
+
+
+@app.command()
 def inspect_session(campaign_slug: str, session_slug: str) -> None:
     """Show counts and artifacts for the latest run of a session."""
     from dnd_summary.db import get_session

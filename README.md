@@ -46,3 +46,7 @@ The pipeline will prefer `.jsonl` transcripts when present, falling back to `.tx
 Optional campaign config lives at:
 `transcripts/campaigns/<campaign_slug>/campaign.json`
 Use this to map speakers to participants and PCs to character names.
+
+## Quick local run (no Temporal)
+If Docker/Temporal is not running, you can execute the pipeline in-process:
+- `uv run dnd-summary run-session-local avarias session_54`
