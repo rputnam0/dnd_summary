@@ -8,6 +8,7 @@ from dnd_summary.models import (
     Artifact,
     Campaign,
     Event,
+    LLMCall,
     Mention,
     Quote,
     Run,
@@ -56,6 +57,11 @@ def main() -> None:
         quotes = session.query(Quote).filter_by(run_id=run.id).all()
         artifacts = session.query(Artifact).filter_by(run_id=run.id).all()
         extractions = session.query(SessionExtraction).filter_by(run_id=run.id).all()
+        llm_calls = session.query(LLMCall).filter_by(run_id=run.id).all()
+        quality = next(
+            (e for e in extractions if e.kind == "quality_report"),
+            None,
+        )
 
         print(f"run_id={run.id}")
         print(f"session_id={session_obj.id}")
@@ -63,6 +69,11 @@ def main() -> None:
         print(f"mentions={len(mentions)} scenes={len(scenes)} events={len(events)}")
         print(f"threads={len(threads)} updates={len(updates)} quotes={len(quotes)}")
         print(f"artifacts={len(artifacts)} extractions={len(extractions)}")
+        print(f"llm_calls={len(llm_calls)}")
+
+        if quality:
+            print("\nQuality report:")
+            print(_dump(quality.payload))
 
         print("\nSample mentions:")
         for mention in mentions[:5]:
@@ -76,15 +87,34 @@ def main() -> None:
                 )
             )
 
+        print("\nSample quotes:")
+        for quote in quotes[:3]:
+            print(
+                _dump(
+                    {
+                        "speaker": quote.speaker,
+                        "clean_text": quote.clean_text,
+                        "note": quote.note,
+                    }
+                )
+            )
+
         print("\nSample events:")
         for event in events[:3]:
+            evidence_count = len(event.evidence or [])
+            span_count = sum(
+                1
+                for ev in (event.evidence or [])
+                if ev.get("char_start") is not None and ev.get("char_end") is not None
+            )
             print(
                 _dump(
                     {
                         "event_type": event.event_type,
                         "summary": event.summary,
                         "entities": event.entities,
-                        "evidence": event.evidence,
+                        "evidence_count": evidence_count,
+                        "evidence_with_spans": span_count,
                     }
                 )
             )
@@ -116,6 +146,23 @@ def main() -> None:
         print("\nExtractions:")
         for extraction in extractions:
             print(_dump({"kind": extraction.kind, "prompt_id": extraction.prompt_id}))
+
+        if llm_calls:
+            failures = [call for call in llm_calls if call.status != "success"]
+            avg_latency = sum(call.latency_ms for call in llm_calls) / len(llm_calls)
+            by_kind: dict[str, int] = {}
+            for call in llm_calls:
+                by_kind[call.kind] = by_kind.get(call.kind, 0) + 1
+            print("\nLLM calls:")
+            print(
+                _dump(
+                    {
+                        "avg_latency_ms": round(avg_latency, 2),
+                        "failures": len(failures),
+                        "by_kind": by_kind,
+                    }
+                )
+            )
 
 
 if __name__ == "__main__":

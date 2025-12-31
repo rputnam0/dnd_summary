@@ -14,6 +14,9 @@ from dnd_summary.models import (
     ThreadUpdate,
     Utterance,
 )
+import re
+from difflib import SequenceMatcher
+
 from dnd_summary.schemas import SessionFacts
 
 
@@ -38,9 +41,26 @@ def _clean_evidence(utterance_lookup: dict[str, str], evidence_list: list) -> tu
     return cleaned, dropped
 
 
-def _clean_quotes(utterance_lookup: dict[str, str], facts: SessionFacts) -> tuple[list, int]:
+def _normalize_text(text: str) -> str:
+    text = re.sub(r"[^\w\s]", " ", text.lower())
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _clean_text_similarity(raw: str, clean: str) -> float:
+    raw_norm = _normalize_text(raw)
+    clean_norm = _normalize_text(clean)
+    if not raw_norm or not clean_norm:
+        return 0.0
+    return SequenceMatcher(None, raw_norm, clean_norm).ratio()
+
+
+def _clean_quotes(
+    utterance_lookup: dict[str, str],
+    facts: SessionFacts,
+) -> tuple[list, int, int]:
     cleaned = []
     dropped = 0
+    clean_text_dropped = 0
     for quote in facts.quotes:
         utterance_text = utterance_lookup.get(quote.utterance_id)
         if utterance_text is None:
@@ -55,8 +75,47 @@ def _clean_quotes(utterance_lookup: dict[str, str], facts: SessionFacts) -> tupl
         if quote.char_end > len(utterance_text):
             dropped += 1
             continue
+        if quote.clean_text:
+            raw_span = utterance_text[quote.char_start : quote.char_end]
+            if _clean_text_similarity(raw_span, quote.clean_text) < 0.6:
+                quote.clean_text = None
+                clean_text_dropped += 1
         cleaned.append(quote)
-    return cleaned, dropped
+    return cleaned, dropped, clean_text_dropped
+
+
+def _count_missing_evidence(items: list) -> int:
+    missing = 0
+    for item in items:
+        if not item.evidence:
+            missing += 1
+    return missing
+
+
+def _count_update_missing_evidence(updates: list) -> int:
+    missing = 0
+    for update in updates:
+        if not update.evidence:
+            missing += 1
+    return missing
+
+
+def _count_evidence_missing_spans(items: list) -> int:
+    missing = 0
+    for item in items:
+        for ev in item.evidence or []:
+            if ev.char_start is None or ev.char_end is None:
+                missing += 1
+    return missing
+
+
+def _count_update_evidence_missing_spans(updates: list) -> int:
+    missing = 0
+    for update in updates:
+        for ev in update.evidence or []:
+            if ev.char_start is None or ev.char_end is None:
+                missing += 1
+    return missing
 
 
 @activity.defn
@@ -82,7 +141,9 @@ async def persist_session_facts_activity(payload: dict) -> dict:
             .all()
         )
         utterance_lookup = {utt.id: utt.text for utt in utterances}
-        cleaned_quotes, dropped_quotes = _clean_quotes(utterance_lookup, facts)
+        cleaned_quotes, dropped_quotes, clean_text_dropped = _clean_quotes(
+            utterance_lookup, facts
+        )
 
         for model in (Mention, Scene, Event, Quote, Thread, ThreadUpdate):
             session.query(model).filter_by(run_id=run_id, session_id=session_id).delete()
@@ -211,6 +272,7 @@ async def persist_session_facts_activity(payload: dict) -> dict:
             "quotes": len(cleaned_quotes),
             "quotes_dropped": dropped_quotes,
             "evidence_dropped": dropped_evidence,
+            "clean_text_dropped": clean_text_dropped,
         }
         metrics_record = SessionExtraction(
             run_id=run_id,
@@ -222,6 +284,40 @@ async def persist_session_facts_activity(payload: dict) -> dict:
             payload=metrics,
         )
         session.add(metrics_record)
+
+        quality_report = {
+            "mentions_missing_evidence": _count_missing_evidence(facts.mentions),
+            "scenes_missing_evidence": _count_missing_evidence(facts.scenes),
+            "events_missing_evidence": _count_missing_evidence(facts.events),
+            "threads_missing_evidence": _count_missing_evidence(facts.threads),
+            "thread_updates_missing_evidence": _count_update_missing_evidence(
+                [u for t in facts.threads for u in t.updates]
+            ),
+            "mentions_evidence_missing_spans": _count_evidence_missing_spans(facts.mentions),
+            "scenes_evidence_missing_spans": _count_evidence_missing_spans(facts.scenes),
+            "events_evidence_missing_spans": _count_evidence_missing_spans(facts.events),
+            "threads_evidence_missing_spans": _count_evidence_missing_spans(facts.threads),
+            "thread_updates_evidence_missing_spans": _count_update_evidence_missing_spans(
+                [u for t in facts.threads for u in t.updates]
+            ),
+            "quotes_missing_clean_text": len(
+                [q for q in cleaned_quotes if not q.clean_text]
+            ),
+            "quotes_with_clean_text": len(
+                [q for q in cleaned_quotes if q.clean_text]
+            ),
+        }
+        session.add(
+            SessionExtraction(
+                run_id=run_id,
+                session_id=session_id,
+                kind="quality_report",
+                model="system",
+                prompt_id="quality_report",
+                prompt_version="1",
+                payload=quality_report,
+            )
+        )
 
     return {
         "run_id": run_id,

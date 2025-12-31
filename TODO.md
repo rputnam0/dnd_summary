@@ -20,6 +20,7 @@
 - Entity-centric API endpoints (`/entities/{entity_id}/mentions|quotes|events`)
 - Session bundle endpoint (`/sessions/{session_id}/bundle`) for UI call reduction
 - Quote clean_text support with display_text for UI
+- Quality report extraction + inspect_run output (evidence coverage, LLM call stats)
 
 ## Mid-term
 - Add correction loop (rename/merge entities, mark false positives, lock canonical names).  
