@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -37,6 +38,29 @@ def _quote_bank(utterances: list[Utterance], quote_ids: list[str]) -> str:
         if text:
             lines.append(f"{qid} ::: {text}")
     return "\n".join(lines)
+
+
+def _build_quote_lookup(utterances: list[Utterance], quote_ids: list[str]) -> dict[str, str]:
+    lookup = {utt.id: utt.text for utt in utterances}
+    return {qid: lookup[qid] for qid in quote_ids if qid in lookup}
+
+
+def _validate_summary_quotes(summary_text: str, quote_texts: list[str]) -> None:
+    if "[" in summary_text and "]" in summary_text:
+        raise ValueError("Summary appears to contain utterance IDs.")
+
+    if not quote_texts:
+        return
+
+    quoted = re.findall(r'"([^"]+)"', summary_text)
+    if not quoted:
+        return
+
+    allowed = set(quote_texts)
+    invalid = [q for q in quoted if q not in allowed]
+    if invalid:
+        sample = invalid[0][:120]
+        raise ValueError(f"Summary contains quote not in Quote Bank: {sample!r}")
 
 
 @activity.defn
@@ -134,6 +158,7 @@ async def write_summary_activity(payload: dict) -> dict:
                 if qid not in quote_ids:
                     quote_ids.append(qid)
         quote_bank = _quote_bank(utterances, quote_ids)
+        quote_lookup = _build_quote_lookup(utterances, quote_ids)
 
         prompt = _load_prompt("write_summary_v1.txt").format(
             summary_plan=json.dumps(plan.model_dump(mode="json")),
@@ -144,6 +169,7 @@ async def write_summary_activity(payload: dict) -> dict:
 
         client = LLMClient()
         summary_text = client.generate_text(prompt)
+        _validate_summary_quotes(summary_text, list(quote_lookup.values()))
 
         summary_record = SessionExtraction(
             run_id=run.id,
@@ -178,6 +204,9 @@ async def render_summary_docx_activity(payload: dict) -> dict:
         summary_text = summary_record.payload["text"]
 
         output_dir = Path(settings.artifacts_root) / session_id
+        output_dir.mkdir(parents=True, exist_ok=True)
+        txt_path = output_dir / "summary.txt"
+        txt_path.write_text(summary_text, encoding="utf-8")
         output_path = output_dir / "summary.docx"
         render_summary_docx(summary_text, output_path)
 
@@ -189,6 +218,19 @@ async def render_summary_docx_activity(payload: dict) -> dict:
             meta={"bytes": output_path.stat().st_size},
             created_at=datetime.utcnow(),
         )
-        session.add(artifact)
+        txt_artifact = Artifact(
+            run_id=run_id,
+            session_id=session_id,
+            kind="summary_txt",
+            path=str(txt_path),
+            meta={"bytes": txt_path.stat().st_size},
+            created_at=datetime.utcnow(),
+        )
+        session.add_all([artifact, txt_artifact])
 
-    return {"run_id": run_id, "session_id": session_id, "path": str(output_path)}
+    return {
+        "run_id": run_id,
+        "session_id": session_id,
+        "path": str(output_path),
+        "text_path": str(txt_path),
+    }
