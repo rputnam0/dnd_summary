@@ -118,5 +118,13 @@ def list_entities(campaign_slug: str) -> None:
             typer.echo(f"{entity.entity_type}\t{entity.canonical_name}")
 
 
+@app.command()
+def api(host: str = "127.0.0.1", port: int = 8000) -> None:
+    """Run the local FastAPI server."""
+    import uvicorn
+
+    uvicorn.run("dnd_summary.api:app", host=host, port=port, reload=False)
+
+
 if __name__ == "__main__":
     app()
