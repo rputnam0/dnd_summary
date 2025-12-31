@@ -206,5 +206,5 @@ class Artifact(Base):
     session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=False)
     kind: Mapped[str] = mapped_column(String, nullable=False)
     path: Mapped[str] = mapped_column(String, nullable=False)
-    metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

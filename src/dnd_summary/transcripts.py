@@ -21,7 +21,7 @@ def _to_ms(seconds: float) -> int:
 
 
 def _parse_timecode(token: str) -> int:
-    match = re.match(r"^(\\d+):(\\d+):(\\d+)$", token.strip())
+    match = re.match(r"^(\d+):(\d+):(\d+)$", token.strip())
     if not match:
         raise ValueError(f"Invalid timestamp: {token}")
     hours, minutes, seconds = map(int, match.groups())
@@ -29,7 +29,7 @@ def _parse_timecode(token: str) -> int:
 
 
 def _parse_srt_timecode(token: str) -> int:
-    match = re.match(r"^(\\d+):(\\d+):(\\d+),(\\d{3})$", token.strip())
+    match = re.match(r"^(\d+):(\d+):(\d+),(\d{3})$", token.strip())
     if not match:
         raise ValueError(f"Invalid SRT timestamp: {token}")
     hours, minutes, seconds, millis = map(int, match.groups())
@@ -65,18 +65,20 @@ def parse_jsonl(path: Path) -> list[ParsedUtterance]:
 
 def parse_txt(path: Path) -> list[ParsedUtterance]:
     utterances: list[ParsedUtterance] = []
-    line_re = re.compile(r"^(?P<speaker>.+?)\\s+(?P<ts>\\d{2}:\\d{2}:\\d{2})\\s+(?P<text>.+)$")
+    ts_re = re.compile(r"\d{2}:\d{2}:\d{2}")
     with path.open("r", encoding="utf-8") as handle:
         for raw in handle:
             raw = raw.strip()
             if not raw:
                 continue
-            match = line_re.match(raw)
+            match = ts_re.search(raw)
             if not match:
                 raise ValueError(f"Invalid TXT transcript line: {raw}")
-            speaker = match.group("speaker").strip()
-            start_ms = _parse_timecode(match.group("ts"))
-            text = match.group("text").strip()
+            speaker = raw[: match.start()].strip()
+            text = raw[match.end() :].strip()
+            start_ms = _parse_timecode(match.group(0))
+            if not speaker or not text:
+                raise ValueError(f"Invalid TXT transcript line: {raw}")
             utterances.append(
                 ParsedUtterance(
                     speaker=speaker or "unknown",
@@ -111,7 +113,7 @@ def parse_txt(path: Path) -> list[ParsedUtterance]:
 
 def parse_srt(path: Path) -> list[ParsedUtterance]:
     utterances: list[ParsedUtterance] = []
-    time_re = re.compile(r"(?P<start>\\d{2}:\\d{2}:\\d{2},\\d{3})\\s+-->\\s+(?P<end>\\d{2}:\\d{2}:\\d{2},\\d{3})")
+    time_re = re.compile(r"(?P<start>\d{2}:\d{2}:\d{2},\d{3})\s+-->\s+(?P<end>\d{2}:\d{2}:\d{2},\d{3})")
     block: list[str] = []
 
     def flush_block(lines: list[str]) -> None:

@@ -35,7 +35,7 @@ def _quote_bank(utterances: list[Utterance], quote_ids: list[str]) -> str:
     for qid in quote_ids:
         text = lookup.get(qid)
         if text:
-            lines.append(f"[{qid}] {text}")
+            lines.append(f"{qid} ::: {text}")
     return "\n".join(lines)
 
 
@@ -186,7 +186,7 @@ async def render_summary_docx_activity(payload: dict) -> dict:
             session_id=session_id,
             kind="summary_docx",
             path=str(output_path),
-            metadata={"bytes": output_path.stat().st_size},
+            meta={"bytes": output_path.stat().st_size},
             created_at=datetime.utcnow(),
         )
         session.add(artifact)

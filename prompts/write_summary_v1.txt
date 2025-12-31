@@ -4,6 +4,7 @@ Requirements:
 - Use the narrative style described in the plan.
 - Stay strictly grounded in the transcript and session facts.
 - If you include quotes, they MUST be copied verbatim from the Quote Bank below.
+- Do NOT include utterance IDs or the delimiter; copy ONLY the quote text.
 - Write 600–1200 words unless the session is unusually short.
 
 Summary plan (JSON):
@@ -12,7 +13,7 @@ Summary plan (JSON):
 Session facts (JSON):
 {session_facts}
 
-Quote Bank (utterance_id -> exact text):
+Quote Bank (utterance_id ::: exact text):
 {quote_bank}
 
 Transcript (each line includes the utterance_id, use only for grounding):

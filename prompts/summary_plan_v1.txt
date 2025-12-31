@@ -1,15 +1,15 @@
 You are planning a narrative summary for a D&D session.
 
 Return ONLY valid JSON matching this schema:
-{
+{{
   "beats": [
-    {
+    {{
       "title": "string",
       "summary": "string",
       "quote_utterance_ids": ["string"]
-    }
+    }}
   ]
-}
+}}
 
 Rules:
 - The beats must be chronological and cover the entire session.
