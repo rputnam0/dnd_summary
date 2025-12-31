@@ -11,6 +11,7 @@ from dnd_summary.models import (
     Artifact,
     Campaign,
     Entity,
+    EntityAlias,
     Event,
     Quote,
     Run,
@@ -84,6 +85,147 @@ def list_entities(campaign_slug: str) -> list[dict]:
                 "description": e.description,
             }
             for e in entities
+        ]
+
+
+@app.get("/entities/{entity_id}")
+def get_entity(entity_id: str) -> dict:
+    with get_session() as session:
+        entity = session.query(Entity).filter_by(id=entity_id).first()
+        if not entity:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        aliases = (
+            session.query(EntityAlias)
+            .filter_by(entity_id=entity.id)
+            .order_by(EntityAlias.alias.asc())
+            .all()
+        )
+        return {
+            "id": entity.id,
+            "name": entity.canonical_name,
+            "type": entity.entity_type,
+            "description": entity.description,
+            "aliases": [alias.alias for alias in aliases],
+        }
+
+
+@app.get("/entities/{entity_id}/mentions")
+def list_entity_mentions(
+    entity_id: str,
+    session_id: Annotated[str | None, Query()] = None,
+    run_id: Annotated[str | None, Query()] = None,
+) -> list[dict]:
+    with get_session() as session:
+        entity = session.query(Entity).filter_by(id=entity_id).first()
+        if not entity:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        run_ids = _resolve_entity_run_ids(session, entity, session_id, run_id)
+        query = (
+            session.query(Mention)
+            .join(EntityMention, EntityMention.mention_id == Mention.id)
+            .filter(EntityMention.entity_id == entity.id)
+            .filter(Mention.run_id.in_(run_ids))
+        )
+        if session_id:
+            query = query.filter(Mention.session_id == session_id)
+        mentions = query.order_by(Mention.created_at.asc()).all()
+        return [
+            {
+                "id": mention.id,
+                "session_id": mention.session_id,
+                "run_id": mention.run_id,
+                "text": mention.text,
+                "entity_type": mention.entity_type,
+                "description": mention.description,
+                "evidence": mention.evidence,
+                "confidence": mention.confidence,
+            }
+            for mention in mentions
+        ]
+
+
+@app.get("/entities/{entity_id}/events")
+def list_entity_events(
+    entity_id: str,
+    session_id: Annotated[str | None, Query()] = None,
+    run_id: Annotated[str | None, Query()] = None,
+) -> list[dict]:
+    with get_session() as session:
+        entity = session.query(Entity).filter_by(id=entity_id).first()
+        if not entity:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        run_ids = _resolve_entity_run_ids(session, entity, session_id, run_id)
+        query = session.query(Event).filter(Event.run_id.in_(run_ids))
+        if session_id:
+            query = query.filter(Event.session_id == session_id)
+        events = query.order_by(Event.start_ms.asc()).all()
+        names = _entity_name_variants(session, entity)
+        matched = []
+        for event in events:
+            entities = event.entities or []
+            if any(_name_matches(candidate, names) for candidate in entities):
+                matched.append(event)
+        return [
+            {
+                "id": event.id,
+                "session_id": event.session_id,
+                "run_id": event.run_id,
+                "event_type": event.event_type,
+                "summary": event.summary,
+                "start_ms": event.start_ms,
+                "end_ms": event.end_ms,
+                "entities": event.entities,
+                "evidence": event.evidence,
+                "confidence": event.confidence,
+            }
+            for event in matched
+        ]
+
+
+@app.get("/entities/{entity_id}/quotes")
+def list_entity_quotes(
+    entity_id: str,
+    session_id: Annotated[str | None, Query()] = None,
+    run_id: Annotated[str | None, Query()] = None,
+) -> list[dict]:
+    with get_session() as session:
+        entity = session.query(Entity).filter_by(id=entity_id).first()
+        if not entity:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        run_ids = _resolve_entity_run_ids(session, entity, session_id, run_id)
+        mentions = (
+            session.query(Mention)
+            .join(EntityMention, EntityMention.mention_id == Mention.id)
+            .filter(EntityMention.entity_id == entity.id)
+            .filter(Mention.run_id.in_(run_ids))
+            .all()
+        )
+        utterance_ids = set()
+        for mention in mentions:
+            for ev in mention.evidence or []:
+                utt_id = ev.get("utterance_id")
+                if utt_id:
+                    utterance_ids.add(utt_id)
+        if not utterance_ids:
+            return []
+        query = session.query(Quote).filter(
+            Quote.run_id.in_(run_ids), Quote.utterance_id.in_(sorted(utterance_ids))
+        )
+        if session_id:
+            query = query.filter(Quote.session_id == session_id)
+        quotes = query.all()
+        return [
+            {
+                "id": q.id,
+                "session_id": q.session_id,
+                "run_id": q.run_id,
+                "utterance_id": q.utterance_id,
+                "char_start": q.char_start,
+                "char_end": q.char_end,
+                "speaker": q.speaker,
+                "note": q.note,
+            }
+            for q in quotes
         ]
 
 
@@ -432,6 +574,45 @@ def _simple_score(text: str, query: str) -> float:
     if not hay or not needle:
         return 0.0
     return float(hay.count(needle))
+
+
+def _resolve_entity_run_ids(
+    session,
+    entity: Entity,
+    session_id: str | None,
+    run_id: str | None,
+) -> set[str]:
+    if run_id:
+        run = session.query(Run).filter_by(id=run_id).first()
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        if session_id and run.session_id != session_id:
+            raise HTTPException(status_code=400, detail="Run does not match session")
+        return {run.id}
+    if session_id:
+        return {_resolve_run_id(session, session_id, None)}
+    return _latest_run_ids_for_campaign(session, entity.campaign_id)
+
+
+def _entity_name_variants(session, entity: Entity) -> set[str]:
+    aliases = (
+        session.query(EntityAlias)
+        .filter_by(entity_id=entity.id)
+        .all()
+    )
+    names = {entity.canonical_name.lower()}
+    names.update(alias.alias.lower() for alias in aliases)
+    return names
+
+
+def _name_matches(candidate: str, names: set[str]) -> bool:
+    cand = candidate.strip().lower()
+    if not cand:
+        return False
+    for name in names:
+        if cand == name or cand in name or name in cand:
+            return True
+    return False
 
 
 @app.get("/threads/{thread_id}/mentions")

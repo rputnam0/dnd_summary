@@ -8,17 +8,16 @@
 - DSPy eval harness in place with legacy analysis docs used to bootstrap a rough gold set; supports NPC/location/item/faction tasks.
 
 ## Next commit plan (near-term)
-1) Entity-centric API endpoints  
-   - Add `GET /entities/{entity_id}/mentions`, `/entities/{entity_id}/quotes`, `/entities/{entity_id}/events`  
-   - Enables UI views like “all appearances of Baba Yaga” or “events involving X”.
-
-2) Eval dataset cleanup + overrides  
+1) Eval dataset cleanup + overrides  
    - Add `evals/overrides/*.json` for manual fixes (per session or per task).  
    - Update dataset builder to merge overrides and track `gold_source`.
 
-3) Thread evidence enrichment  
+2) Thread evidence enrichment  
    - Add optional event linkage in extraction schema (thread updates include `related_event_ids`).  
    - Use event evidence to populate thread mention/quote endpoints.
+
+## Recently completed
+- Entity-centric API endpoints (`/entities/{entity_id}/mentions|quotes|events`)
 
 ## Mid-term
 - Add correction loop (rename/merge entities, mark false positives, lock canonical names).  
