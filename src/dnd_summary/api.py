@@ -214,6 +214,10 @@ def list_entity_quotes(
         if session_id:
             query = query.filter(Quote.session_id == session_id)
         quotes = query.all()
+        utterance_lookup = _utterance_lookup(
+            session,
+            {quote.session_id for quote in quotes},
+        )
         return [
             {
                 "id": q.id,
@@ -225,6 +229,7 @@ def list_entity_quotes(
                 "speaker": q.speaker,
                 "note": q.note,
                 "clean_text": q.clean_text,
+                "display_text": _quote_display_text(q, utterance_lookup),
             }
             for q in quotes
         ]
@@ -299,6 +304,7 @@ def list_quotes(
             .filter_by(session_id=session_id, run_id=resolved_run_id)
             .all()
         )
+        utterance_lookup = _utterance_lookup(session, {session_id})
         return [
             {
                 "id": q.id,
@@ -308,6 +314,7 @@ def list_quotes(
                 "speaker": q.speaker,
                 "note": q.note,
                 "clean_text": q.clean_text,
+                "display_text": _quote_display_text(q, utterance_lookup),
             }
             for q in quotes
         ]
@@ -540,6 +547,28 @@ def _utterance_ids_from_evidence(entries: list[dict] | None) -> set[str]:
     return ids
 
 
+def _utterance_lookup(session, session_ids: set[str]) -> dict[str, str]:
+    if not session_ids:
+        return {}
+    utterances = (
+        session.query(Utterance)
+        .filter(Utterance.session_id.in_(sorted(session_ids)))
+        .all()
+    )
+    return {utt.id: utt.text for utt in utterances}
+
+
+def _quote_display_text(quote: Quote, utterance_lookup: dict[str, str]) -> str | None:
+    if quote.clean_text:
+        return quote.clean_text
+    utterance_text = utterance_lookup.get(quote.utterance_id)
+    if not utterance_text:
+        return None
+    if quote.char_start is None or quote.char_end is None:
+        return utterance_text.strip()
+    return utterance_text[quote.char_start : quote.char_end].strip()
+
+
 def _resolve_run_id(session, session_id: str, run_id: str | None) -> str:
     if run_id:
         run = session.query(Run).filter_by(id=run_id, session_id=session_id).first()
@@ -742,6 +771,7 @@ def list_thread_quotes(thread_id: str) -> list[dict]:
                         .filter(Quote.utterance_id.in_(sorted(set(candidate_ids))))
                         .all()
                     )
+        utterance_lookup = _utterance_lookup(session, {thread.session_id})
         return [
             {
                 "id": q.id,
@@ -751,6 +781,7 @@ def list_thread_quotes(thread_id: str) -> list[dict]:
                 "speaker": q.speaker,
                 "note": q.note,
                 "clean_text": q.clean_text,
+                "display_text": _quote_display_text(q, utterance_lookup),
             }
             for q in quotes
         ]
