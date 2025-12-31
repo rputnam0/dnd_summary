@@ -94,3 +94,16 @@ class Utterance(Base):
     session = relationship("Session", back_populates="utterances")
     participant = relationship("Participant", back_populates="utterances")
 
+
+class SessionExtraction(Base):
+    __tablename__ = "session_extractions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), nullable=False)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    prompt_id: Mapped[str] = mapped_column(String, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

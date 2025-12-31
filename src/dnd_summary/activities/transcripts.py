@@ -150,4 +150,7 @@ async def ingest_transcript_activity(payload: dict) -> dict:
         "transcript": src.__dict__,
         "utterances": len(utterances),
         "transcript_hash": transcript_hash,
+        "run_id": run.id,
+        "session_id": session_obj.id,
+        "campaign_id": campaign.id,
     }

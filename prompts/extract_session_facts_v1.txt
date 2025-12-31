@@ -1,0 +1,71 @@
+You are extracting structured session facts from a D&D transcript.
+
+Return ONLY valid JSON matching this schema:
+{
+  "mentions": [
+    {
+      "text": "string",
+      "entity_type": "character|location|item|faction|monster|deity|organization|other",
+      "description": "string or null",
+      "evidence": [{"utterance_id": "string", "char_start": 0, "char_end": 1, "kind": "mention", "confidence": 0.0}],
+      "confidence": 0.0
+    }
+  ],
+  "scenes": [
+    {
+      "title": "string or null",
+      "start_ms": 0,
+      "end_ms": 0,
+      "summary": "string",
+      "location": "string or null",
+      "participants": ["string"],
+      "evidence": [{"utterance_id": "string", "char_start": 0, "char_end": 1, "kind": "support", "confidence": 0.0}]
+    }
+  ],
+  "events": [
+    {
+      "event_type": "combat|social|travel|discovery|loot|economy|relationship|thread_update|rules|generic",
+      "start_ms": 0,
+      "end_ms": 0,
+      "summary": "string",
+      "entities": ["string"],
+      "evidence": [{"utterance_id": "string", "char_start": 0, "char_end": 1, "kind": "support", "confidence": 0.0}],
+      "confidence": 0.0
+    }
+  ],
+  "threads": [
+    {
+      "title": "string",
+      "kind": "quest|mystery|personal_arc|faction_arc|other",
+      "status": "proposed|active|blocked|completed|failed|abandoned",
+      "summary": "string or null",
+      "updates": [
+        {
+          "update_type": "string",
+          "note": "string",
+          "evidence": [{"utterance_id": "string", "char_start": 0, "char_end": 1, "kind": "support", "confidence": 0.0}]
+        }
+      ],
+      "evidence": [{"utterance_id": "string", "char_start": 0, "char_end": 1, "kind": "support", "confidence": 0.0}],
+      "confidence": 0.0
+    }
+  ],
+  "quotes": [
+    {
+      "utterance_id": "string",
+      "char_start": 0,
+      "char_end": 1,
+      "speaker": "string or null",
+      "note": "string or null"
+    }
+  ]
+}
+
+Rules:
+- Use ONLY utterance_id values that appear in the transcript below.
+- char_start/char_end must be offsets into the referenced utterance text.
+- If you are unsure, lower confidence instead of inventing facts.
+- Prefer completeness over brevity; include NPCs, locations, items, factions, relationships, money, and combat outcomes.
+
+Transcript (each line includes the utterance_id):
+{transcript}

@@ -12,7 +12,10 @@ class Settings(BaseSettings):
     temporal_task_queue: str = "dnd-summary"
 
     transcripts_root: str = "transcripts"
+    prompts_root: str = "prompts"
+
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3-flash"
 
 
 settings = Settings()
-

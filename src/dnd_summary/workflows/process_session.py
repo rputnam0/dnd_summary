@@ -20,4 +20,12 @@ class ProcessSessionWorkflow:
             payload,
             start_to_close_timeout=timedelta(seconds=60),
         )
-        return {"status": "ok", "ingest": transcript}
+        extraction = await workflow.execute_activity(
+            "extract_session_facts_activity",
+            {
+                "run_id": transcript["run_id"],
+                "session_id": transcript["session_id"],
+            },
+            start_to_close_timeout=timedelta(minutes=10),
+        )
+        return {"status": "ok", "ingest": transcript, "extract": extraction}

@@ -29,6 +29,12 @@ Use `uv` with `pyproject.toml` (no `requirements.txt`).
 - Run tests:
   - `uv run pytest`
 
+## LLM configuration
+
+Set your Gemini API key in the environment before running extraction:
+- `DND_GEMINI_API_KEY=...`
+- Optional: `DND_GEMINI_MODEL=gemini-3-flash`
+
 ## Canonical transcript inputs
 
 Canonical ingestion source lives under `transcripts/` (multi-campaign):
