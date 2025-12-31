@@ -294,6 +294,22 @@ button:hover {
   line-height: 1.6;
 }
 
+.metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+}
+
+.metrics span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(207, 174, 88, 0.15);
+}
+
 .artifact-links {
   display: flex;
   gap: 12px;
@@ -374,6 +390,34 @@ button:hover {
   gap: 12px;
 }
 
+.timeline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.timeline-card {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 12px;
+  align-items: start;
+  background: rgba(9, 11, 14, 0.65);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  border: 1px solid rgba(207, 174, 88, 0.15);
+}
+
+.timeline-time {
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 0.8rem;
+  color: var(--gold-soft);
+}
+
+.timeline-title {
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+
 .scene-card h3,
 .event-card h3 {
   margin: 0 0 8px;
@@ -424,6 +468,22 @@ button:hover {
   margin: 0;
   font-size: 0.85rem;
   color: var(--ink-muted);
+}
+
+.entity-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+}
+
+.entity-card button {
+  margin-top: 8px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
 }
 
 .search-panel {

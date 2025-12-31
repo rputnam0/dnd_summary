@@ -57,8 +57,17 @@
               <h2>Session Summary</h2>
               <div id="sessionMeta" class="meta"></div>
             </div>
+            <div id="runMetrics" class="metrics"></div>
             <div id="summaryText" class="summary-text"></div>
             <div id="artifactLinks" class="artifact-links"></div>
+          </section>
+
+          <section id="timelineSection" class="panel">
+            <div class="panel-header">
+              <h2>Chronicle Timeline</h2>
+              <span class="badge">Flow</span>
+            </div>
+            <div id="timelineList" class="timeline-list"></div>
           </section>
 
           <section id="threadSection" class="panel">
@@ -98,6 +107,19 @@
               <h2>Entities</h2>
               <span class="badge">Cast & Places</span>
             </div>
+            <div class="entity-controls">
+              <label for="entityFilter">Filter</label>
+              <select id="entityFilter">
+                <option value="all">All</option>
+                <option value="character">Characters</option>
+                <option value="location">Locations</option>
+                <option value="item">Items</option>
+                <option value="faction">Factions</option>
+                <option value="monster">Monsters</option>
+                <option value="organization">Organizations</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
             <div id="entityList" class="entity-grid"></div>
           </section>
         </main>
@@ -115,6 +137,20 @@
           <button id="closeSearch" type="button">Close</button>
         </div>
         <div id="searchResults" class="search-results"></div>
+      </div>
+    </div>
+
+    <div id="entityPanel" class="search-panel hidden">
+      <div class="search-card">
+        <div class="search-header">
+          <div>
+            <p class="eyebrow">Entity Dossier</p>
+            <h3 id="entityTitle">Entity</h3>
+            <p id="entityMeta" class="meta"></p>
+          </div>
+          <button id="closeEntity" type="button">Close</button>
+        </div>
+        <div id="entityDetails" class="search-results"></div>
       </div>
     </div>
 

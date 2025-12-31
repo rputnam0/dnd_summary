@@ -51,6 +51,15 @@ Use this to map speakers to participants and PCs to character names.
 If Docker/Temporal is not running, you can execute the pipeline in-process:
 - `uv run dnd-summary run-session-local avarias session_54`
 
+## UI dashboard
+Run the API server and open the fantasy UI:
+- `uv run dnd-summary api`
+- Visit `http://127.0.0.1:8000/ui/`
+
+Search tips:
+- Toggle Semantic Search for query expansion (LLM-backed).
+- Example: `Baba Yaga`, `magic shop potion`, `Rowan's Blessing`.
+
 ## DSPy evals
 Evaluate prompt quality with the NPC extraction harness:
 - `uv pip install -e ".[eval]"`

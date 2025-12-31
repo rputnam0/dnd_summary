@@ -15,6 +15,7 @@ const elements = {
   sessionCount: document.getElementById("sessionCount"),
   statusLine: document.getElementById("statusLine"),
   sessionMeta: document.getElementById("sessionMeta"),
+  runMetrics: document.getElementById("runMetrics"),
   summaryText: document.getElementById("summaryText"),
   artifactLinks: document.getElementById("artifactLinks"),
   threadList: document.getElementById("threadList"),
@@ -22,6 +23,8 @@ const elements = {
   eventList: document.getElementById("eventList"),
   quoteList: document.getElementById("quoteList"),
   entityList: document.getElementById("entityList"),
+  entityFilter: document.getElementById("entityFilter"),
+  timelineList: document.getElementById("timelineList"),
   searchInput: document.getElementById("searchInput"),
   searchButton: document.getElementById("searchButton"),
   semanticToggle: document.getElementById("semanticToggle"),
@@ -30,6 +33,11 @@ const elements = {
   searchTitle: document.getElementById("searchTitle"),
   searchSub: document.getElementById("searchSub"),
   closeSearch: document.getElementById("closeSearch"),
+  entityPanel: document.getElementById("entityPanel"),
+  entityTitle: document.getElementById("entityTitle"),
+  entityMeta: document.getElementById("entityMeta"),
+  entityDetails: document.getElementById("entityDetails"),
+  closeEntity: document.getElementById("closeEntity"),
 };
 
 function setStatus(message) {
@@ -73,6 +81,24 @@ function renderParagraphs(text) {
       p.textContent = part.trim();
       elements.summaryText.appendChild(p);
     });
+}
+
+function renderMetrics(bundle) {
+  clearNode(elements.runMetrics);
+  if (!bundle) return;
+  const metrics = [
+    `Run ${bundle.run_id ? bundle.run_id.slice(0, 8) : "n/a"}`,
+    `${bundle.scenes ? bundle.scenes.length : 0} scenes`,
+    `${bundle.events ? bundle.events.length : 0} events`,
+    `${bundle.threads ? bundle.threads.length : 0} threads`,
+    `${bundle.quotes ? bundle.quotes.length : 0} quotes`,
+    `${bundle.entities ? bundle.entities.length : 0} entities`,
+  ];
+  metrics.forEach((metric) => {
+    const badge = document.createElement("span");
+    badge.textContent = metric;
+    elements.runMetrics.appendChild(badge);
+  });
 }
 
 function renderArtifacts(artifacts) {
@@ -210,7 +236,16 @@ function renderEntities(entities) {
     elements.entityList.textContent = "No entities in this session.";
     return;
   }
-  entities.forEach((entity) => {
+  const filter = elements.entityFilter.value;
+  const filtered = entities.filter((entity) => {
+    if (filter === "all") return true;
+    return entity.type === filter;
+  });
+  if (filtered.length === 0) {
+    elements.entityList.textContent = "No entities match the filter.";
+    return;
+  }
+  filtered.forEach((entity) => {
     const card = document.createElement("div");
     card.className = "entity-card";
     const title = document.createElement("h3");
@@ -224,7 +259,63 @@ function renderEntities(entities) {
       desc.textContent = entity.description;
       card.appendChild(desc);
     }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Open dossier";
+    button.addEventListener("click", () => openEntity(entity));
+    card.appendChild(button);
     elements.entityList.appendChild(card);
+  });
+}
+
+function renderTimeline(scenes, events) {
+  clearNode(elements.timelineList);
+  if ((!scenes || scenes.length === 0) && (!events || events.length === 0)) {
+    elements.timelineList.textContent =
+      "Timeline will appear once scenes/events are available.";
+    return;
+  }
+  const entries = [];
+  scenes.forEach((scene) => {
+    entries.push({
+      start: scene.start_ms || 0,
+      type: "Scene",
+      title: scene.title || "Scene",
+      detail: scene.summary,
+    });
+  });
+  events.forEach((event) => {
+    entries.push({
+      start: event.start_ms || 0,
+      type: event.event_type,
+      title: event.summary,
+      detail: null,
+    });
+  });
+  entries.sort((a, b) => a.start - b.start);
+  entries.forEach((entry) => {
+    const card = document.createElement("div");
+    card.className = "timeline-card";
+    const time = document.createElement("div");
+    time.className = "timeline-time";
+    time.textContent = formatTime(entry.start);
+    const body = document.createElement("div");
+    const title = document.createElement("h3");
+    title.className = "timeline-title";
+    title.textContent = entry.title;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = entry.type;
+    body.appendChild(title);
+    if (entry.detail) {
+      const p = document.createElement("p");
+      p.textContent = entry.detail;
+      body.appendChild(p);
+    }
+    body.appendChild(meta);
+    card.appendChild(time);
+    card.appendChild(body);
+    elements.timelineList.appendChild(card);
   });
 }
 
@@ -271,6 +362,7 @@ function renderBundle(bundle) {
   if (!bundle) {
     return;
   }
+  renderMetrics(bundle);
   renderParagraphs(bundle.summary);
   renderArtifacts(bundle.artifacts || []);
   renderThreads(bundle.threads || []);
@@ -278,6 +370,7 @@ function renderBundle(bundle) {
   renderEvents(bundle.events || []);
   renderQuotes(bundle.quotes || []);
   renderEntities(bundle.entities || []);
+  renderTimeline(bundle.scenes || [], bundle.events || []);
 }
 
 async function loadCampaigns() {
@@ -324,7 +417,79 @@ async function loadSession(sessionId) {
   const bundle = await fetchJson(`/sessions/${sessionId}/bundle`);
   state.bundle = bundle;
   renderBundle(bundle);
-  setStatus("Session loaded.");
+  const runShort = bundle.run_id ? bundle.run_id.slice(0, 8) : "unknown";
+  setStatus(`Session loaded. Run ${runShort}.`);
+}
+
+async function jumpToSession(sessionId) {
+  if (!sessionId) return;
+  await loadSession(sessionId);
+  closeSearch();
+}
+
+async function openEntity(entity) {
+  if (!entity || !entity.id) return;
+  if (!state.selectedSession) return;
+  elements.entityTitle.textContent = entity.name;
+  elements.entityMeta.textContent = entity.type || "entity";
+  clearNode(elements.entityDetails);
+  elements.entityPanel.classList.remove("hidden");
+  try {
+    const [detail, mentions, events, quotes] = await Promise.all([
+      fetchJson(`/entities/${entity.id}`),
+      fetchJson(`/entities/${entity.id}/mentions?session_id=${state.selectedSession}`),
+      fetchJson(`/entities/${entity.id}/events?session_id=${state.selectedSession}`),
+      fetchJson(`/entities/${entity.id}/quotes?session_id=${state.selectedSession}`),
+    ]);
+    const aliasText =
+      detail.aliases && detail.aliases.length > 0 ? detail.aliases.join(", ") : "None";
+    const header = document.createElement("div");
+    header.className = "search-item";
+    header.innerHTML = `<strong>Aliases:</strong> ${aliasText}`;
+    elements.entityDetails.appendChild(header);
+
+    const blocks = [];
+    if (mentions.length > 0) {
+      blocks.push(
+        buildSearchBlock("Mentions", mentions.slice(0, 10), (m) =>
+          renderSearchItem(m.text || "mention", null)
+        )
+      );
+    }
+    if (events.length > 0) {
+      blocks.push(
+        buildSearchBlock("Events", events.slice(0, 10), (e) =>
+          renderSearchItem(e.summary, null)
+        )
+      );
+    }
+    if (quotes.length > 0) {
+      blocks.push(
+        buildSearchBlock("Quotes", quotes.slice(0, 10), (q) =>
+          renderSearchItem(
+            q.display_text || q.clean_text || "",
+            q.speaker || ""
+          )
+        )
+      );
+    }
+    if (blocks.length === 0) {
+      elements.entityDetails.appendChild(
+        renderSearchItem("No session data for this entity.", null)
+      );
+    } else {
+      blocks.forEach((block) => elements.entityDetails.appendChild(block));
+    }
+  } catch (err) {
+    elements.entityDetails.appendChild(
+      renderSearchItem("Failed to load entity dossier.", null)
+    );
+    console.error(err);
+  }
+}
+
+function closeEntityPanel() {
+  elements.entityPanel.classList.add("hidden");
 }
 
 function buildSearchBlock(title, items, renderFn) {
@@ -337,7 +502,7 @@ function buildSearchBlock(title, items, renderFn) {
   return block;
 }
 
-function renderSearchItem(text, meta) {
+function renderSearchItem(text, meta, onClick) {
   const item = document.createElement("div");
   item.className = "search-item";
   item.textContent = text;
@@ -345,6 +510,10 @@ function renderSearchItem(text, meta) {
     const small = document.createElement("small");
     small.textContent = meta;
     item.appendChild(small);
+  }
+  if (onClick) {
+    item.style.cursor = "pointer";
+    item.addEventListener("click", () => onClick());
   }
   return item;
 }
@@ -364,7 +533,8 @@ function renderSearchResults(query, data, semantic) {
       buildSearchBlock("Mentions", data.mentions, (m) =>
         renderSearchItem(
           `${m.text} (${m.entity_type})`,
-          sessionLabel(m.session_id)
+          sessionLabel(m.session_id),
+          () => jumpToSession(m.session_id)
         )
       )
     );
@@ -372,42 +542,56 @@ function renderSearchResults(query, data, semantic) {
   if (data.events && data.events.length > 0) {
     blocks.push(
       buildSearchBlock("Events", data.events, (e) =>
-        renderSearchItem(e.summary, sessionLabel(e.session_id))
+        renderSearchItem(e.summary, sessionLabel(e.session_id), () =>
+          jumpToSession(e.session_id)
+        )
       )
     );
   }
   if (data.threads && data.threads.length > 0) {
     blocks.push(
       buildSearchBlock("Threads", data.threads, (t) =>
-        renderSearchItem(t.title, sessionLabel(t.session_id))
+        renderSearchItem(t.title, sessionLabel(t.session_id), () =>
+          jumpToSession(t.session_id)
+        )
       )
     );
   }
   if (data.thread_updates && data.thread_updates.length > 0) {
     blocks.push(
       buildSearchBlock("Thread Updates", data.thread_updates, (u) =>
-        renderSearchItem(u.note || "Update", sessionLabel(u.session_id))
+        renderSearchItem(u.note || "Update", sessionLabel(u.session_id), () =>
+          jumpToSession(u.session_id)
+        )
       )
     );
   }
   if (data.scenes && data.scenes.length > 0) {
     blocks.push(
       buildSearchBlock("Scenes", data.scenes, (s) =>
-        renderSearchItem(s.summary, sessionLabel(s.session_id))
+        renderSearchItem(s.summary, sessionLabel(s.session_id), () =>
+          jumpToSession(s.session_id)
+        )
       )
     );
   }
   if (data.quotes && data.quotes.length > 0) {
     blocks.push(
       buildSearchBlock("Quotes", data.quotes, (q) =>
-        renderSearchItem(q.display_text || q.clean_text || "", sessionLabel(q.session_id))
+        renderSearchItem(
+          q.display_text || q.clean_text || "",
+          sessionLabel(q.session_id),
+          () => jumpToSession(q.session_id)
+        )
       )
     );
   }
   if (data.utterances && data.utterances.length > 0) {
     blocks.push(
       buildSearchBlock("Utterances", data.utterances, (u) =>
-        renderSearchItem(u.text, sessionLabel(u.session_id))
+        renderSearchItem(u.text, sessionLabel(u.session_id), () =>
+          jumpToSession(u.session_id)
+        )
       )
     );
   }
@@ -475,9 +659,20 @@ async function init() {
     }
   });
   elements.closeSearch.addEventListener("click", closeSearch);
+  elements.closeEntity.addEventListener("click", closeEntityPanel);
   elements.searchPanel.addEventListener("click", (event) => {
     if (event.target === elements.searchPanel) {
       closeSearch();
+    }
+  });
+  elements.entityPanel.addEventListener("click", (event) => {
+    if (event.target === elements.entityPanel) {
+      closeEntityPanel();
+    }
+  });
+  elements.entityFilter.addEventListener("change", () => {
+    if (state.bundle) {
+      renderEntities(state.bundle.entities || []);
     }
   });
 
