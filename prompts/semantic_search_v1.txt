@@ -1,0 +1,17 @@
+You are expanding a D&D campaign search query into search terms.
+
+Return ONLY valid JSON matching this schema:
+{{
+  "keywords": ["string"],
+  "entities": ["string"],
+  "notes": "string or null"
+}}
+
+Rules:
+- keywords should be 4-10 short phrases, lowercase when possible.
+- entities should be any named NPCs, locations, factions, items, or spells implied by the query.
+- Include synonyms and related terms players might use.
+- Avoid duplicating the original query.
+
+Query:
+{query}

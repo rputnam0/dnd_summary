@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_
 
+from dnd_summary.config import settings
 from dnd_summary.db import get_session
+from dnd_summary.llm import LLMClient
 from dnd_summary.models import (
     Artifact,
     Campaign,
@@ -24,14 +30,44 @@ from dnd_summary.models import (
     Mention,
     Utterance,
 )
+from dnd_summary.schema_genai import semantic_search_schema
 
 
 app = FastAPI(title="DND Summary API", version="0.0.0")
+
+UI_ROOT = Path(__file__).resolve().parent / "ui"
+if UI_ROOT.exists():
+    app.mount("/ui", StaticFiles(directory=UI_ROOT, html=True), name="ui")
+
+
+@app.get("/", include_in_schema=False)
+def ui_index() -> HTMLResponse:
+    if UI_ROOT.exists():
+        return RedirectResponse("/ui/")
+    return HTMLResponse("<h1>DND Summary API</h1>")
 
 
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/artifacts/{artifact_id}")
+def get_artifact(artifact_id: str) -> FileResponse:
+    with get_session() as session:
+        artifact = session.query(Artifact).filter_by(id=artifact_id).first()
+        if not artifact:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        base = Path(settings.artifacts_root).resolve()
+        artifact_path = Path(artifact.path)
+        if not artifact_path.is_absolute():
+            artifact_path = base / artifact.path
+        artifact_path = artifact_path.resolve()
+        if base != artifact_path and base not in artifact_path.parents:
+            raise HTTPException(status_code=400, detail="Invalid artifact path")
+        if not artifact_path.exists():
+            raise HTTPException(status_code=404, detail="Artifact file missing")
+        return FileResponse(artifact_path, filename=artifact_path.name)
 
 
 @app.get("/campaigns")
@@ -433,6 +469,254 @@ def search_campaign(
         }
 
 
+@app.get("/campaigns/{campaign_slug}/semantic_search")
+def semantic_search_campaign(
+    campaign_slug: str,
+    q: str = Query(..., min_length=2),
+    include_all_runs: Annotated[bool, Query()] = False,
+    session_id: Annotated[str | None, Query()] = None,
+) -> dict:
+    with get_session() as session:
+        campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+
+        run_ids = None
+        if not include_all_runs:
+            run_ids = _latest_run_ids_for_campaign(session, campaign.id)
+
+        terms = _semantic_terms(q)
+        likes = [f"%{term}%" for term in terms]
+
+        mention_filters = [
+            or_(
+                func.lower(Mention.text).like(like),
+                func.lower(func.coalesce(Mention.description, "")).like(like),
+            )
+            for like in likes
+        ]
+        mention_query = (
+            session.query(Mention)
+            .join(Session, Session.id == Mention.session_id)
+            .filter(Session.campaign_id == campaign.id)
+        )
+        if session_id:
+            mention_query = mention_query.filter(Mention.session_id == session_id)
+        if run_ids is not None:
+            mention_query = mention_query.filter(Mention.run_id.in_(run_ids))
+        if mention_filters:
+            mention_query = mention_query.filter(or_(*mention_filters))
+        mentions_raw = mention_query.limit(80).all()
+
+        event_filters = [func.lower(Event.summary).like(like) for like in likes]
+        event_query = (
+            session.query(Event)
+            .join(Session, Session.id == Event.session_id)
+            .filter(Session.campaign_id == campaign.id)
+        )
+        if session_id:
+            event_query = event_query.filter(Event.session_id == session_id)
+        if run_ids is not None:
+            event_query = event_query.filter(Event.run_id.in_(run_ids))
+        if event_filters:
+            event_query = event_query.filter(or_(*event_filters))
+        events_raw = event_query.limit(80).all()
+
+        scene_filters = [
+            or_(
+                func.lower(Scene.summary).like(like),
+                func.lower(func.coalesce(Scene.title, "")).like(like),
+            )
+            for like in likes
+        ]
+        scene_query = (
+            session.query(Scene)
+            .join(Session, Session.id == Scene.session_id)
+            .filter(Session.campaign_id == campaign.id)
+        )
+        if session_id:
+            scene_query = scene_query.filter(Scene.session_id == session_id)
+        if run_ids is not None:
+            scene_query = scene_query.filter(Scene.run_id.in_(run_ids))
+        if scene_filters:
+            scene_query = scene_query.filter(or_(*scene_filters))
+        scenes_raw = scene_query.limit(60).all()
+
+        thread_filters = [
+            or_(
+                func.lower(Thread.title).like(like),
+                func.lower(func.coalesce(Thread.summary, "")).like(like),
+            )
+            for like in likes
+        ]
+        thread_query = (
+            session.query(Thread)
+            .join(Session, Session.id == Thread.session_id)
+            .filter(Session.campaign_id == campaign.id)
+        )
+        if session_id:
+            thread_query = thread_query.filter(Thread.session_id == session_id)
+        if run_ids is not None:
+            thread_query = thread_query.filter(Thread.run_id.in_(run_ids))
+        if thread_filters:
+            thread_query = thread_query.filter(or_(*thread_filters))
+        threads_raw = thread_query.limit(40).all()
+
+        update_filters = [func.lower(ThreadUpdate.note).like(like) for like in likes]
+        update_query = (
+            session.query(ThreadUpdate)
+            .join(Thread, Thread.id == ThreadUpdate.thread_id)
+            .join(Session, Session.id == ThreadUpdate.session_id)
+            .filter(Session.campaign_id == campaign.id)
+        )
+        if session_id:
+            update_query = update_query.filter(ThreadUpdate.session_id == session_id)
+        if run_ids is not None:
+            update_query = update_query.filter(ThreadUpdate.run_id.in_(run_ids))
+        if update_filters:
+            update_query = update_query.filter(or_(*update_filters))
+        updates_raw = update_query.limit(60).all()
+
+        quote_filters = [
+            or_(
+                func.lower(func.coalesce(Quote.clean_text, "")).like(like),
+                func.lower(func.coalesce(Quote.note, "")).like(like),
+                func.lower(func.coalesce(Quote.speaker, "")).like(like),
+            )
+            for like in likes
+        ]
+        quote_query = (
+            session.query(Quote)
+            .join(Session, Session.id == Quote.session_id)
+            .filter(Session.campaign_id == campaign.id)
+        )
+        if session_id:
+            quote_query = quote_query.filter(Quote.session_id == session_id)
+        if run_ids is not None:
+            quote_query = quote_query.filter(Quote.run_id.in_(run_ids))
+        if quote_filters:
+            quote_query = quote_query.filter(or_(*quote_filters))
+        quotes_raw = quote_query.limit(60).all()
+
+        utterance_filters = [func.lower(Utterance.text).like(like) for like in likes]
+        utterance_query = (
+            session.query(Utterance)
+            .join(Session, Session.id == Utterance.session_id)
+            .filter(Session.campaign_id == campaign.id)
+        )
+        if session_id:
+            utterance_query = utterance_query.filter(Utterance.session_id == session_id)
+        if utterance_filters:
+            utterance_query = utterance_query.filter(or_(*utterance_filters))
+        utterances_raw = utterance_query.limit(80).all()
+
+        utterance_lookup = _utterance_lookup(session, {u.session_id for u in quotes_raw})
+
+        mentions = [
+            {
+                "id": m.id,
+                "session_id": m.session_id,
+                "text": m.text,
+                "entity_type": m.entity_type,
+                "description": m.description,
+                "evidence": m.evidence,
+                "score": _score_terms(f"{m.text} {m.description or ''}", terms),
+            }
+            for m in mentions_raw
+        ]
+        events = [
+            {
+                "id": e.id,
+                "session_id": e.session_id,
+                "event_type": e.event_type,
+                "summary": e.summary,
+                "start_ms": e.start_ms,
+                "end_ms": e.end_ms,
+                "entities": e.entities,
+                "evidence": e.evidence,
+                "score": _score_terms(e.summary, terms),
+            }
+            for e in events_raw
+        ]
+        scenes = [
+            {
+                "id": s.id,
+                "session_id": s.session_id,
+                "title": s.title,
+                "summary": s.summary,
+                "start_ms": s.start_ms,
+                "end_ms": s.end_ms,
+                "location": s.location,
+                "score": _score_terms(f"{s.title or ''} {s.summary}", terms),
+            }
+            for s in scenes_raw
+        ]
+        threads = [
+            {
+                "id": t.id,
+                "session_id": t.session_id,
+                "title": t.title,
+                "summary": t.summary,
+                "status": t.status,
+                "score": _score_terms(f"{t.title} {t.summary or ''}", terms),
+            }
+            for t in threads_raw
+        ]
+        updates = [
+            {
+                "id": u.id,
+                "session_id": u.session_id,
+                "thread_id": u.thread_id,
+                "note": u.note,
+                "score": _score_terms(u.note or "", terms),
+            }
+            for u in updates_raw
+        ]
+        quotes = [
+            {
+                "id": q.id,
+                "session_id": q.session_id,
+                "speaker": q.speaker,
+                "note": q.note,
+                "clean_text": q.clean_text,
+                "display_text": _quote_display_text(q, utterance_lookup),
+                "score": _score_terms(f"{q.clean_text or ''} {q.note or ''}", terms),
+            }
+            for q in quotes_raw
+        ]
+        utterances = [
+            {
+                "id": u.id,
+                "session_id": u.session_id,
+                "participant_id": u.participant_id,
+                "start_ms": u.start_ms,
+                "end_ms": u.end_ms,
+                "text": u.text,
+                "score": _score_terms(u.text, terms),
+            }
+            for u in utterances_raw
+        ]
+
+        mentions.sort(key=lambda item: item["score"], reverse=True)
+        events.sort(key=lambda item: item["score"], reverse=True)
+        scenes.sort(key=lambda item: item["score"], reverse=True)
+        threads.sort(key=lambda item: item["score"], reverse=True)
+        updates.sort(key=lambda item: item["score"], reverse=True)
+        quotes.sort(key=lambda item: item["score"], reverse=True)
+        utterances.sort(key=lambda item: item["score"], reverse=True)
+
+        return {
+            "terms": terms,
+            "mentions": mentions,
+            "events": events,
+            "threads": threads,
+            "thread_updates": updates,
+            "scenes": scenes,
+            "quotes": quotes,
+            "utterances": utterances,
+        }
+
+
 @app.get("/sessions/{session_id}/scenes")
 def list_scenes(
     session_id: str,
@@ -606,6 +890,47 @@ def _simple_score(text: str, query: str) -> float:
     if not hay or not needle:
         return 0.0
     return float(hay.count(needle))
+
+
+def _score_terms(text: str, terms: list[str]) -> float:
+    if not text:
+        return 0.0
+    return float(sum(_simple_score(text, term) for term in terms))
+
+
+def _load_prompt(prompt_name: str) -> str:
+    prompt_path = Path(settings.prompts_root) / prompt_name
+    return prompt_path.read_text(encoding="utf-8")
+
+
+def _normalize_terms(terms: list[str]) -> list[str]:
+    cleaned = []
+    seen = set()
+    for term in terms:
+        if not term:
+            continue
+        normalized = re.sub(r"\\s+", " ", term.strip().lower())
+        if len(normalized) < 2:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        cleaned.append(normalized)
+    return cleaned
+
+
+def _semantic_terms(query: str) -> list[str]:
+    try:
+        prompt = _load_prompt("semantic_search_v1.txt").format(query=query)
+        client = LLMClient()
+        raw = client.generate_json_schema(prompt, schema=semantic_search_schema())
+        payload = json.loads(raw)
+        keywords = payload.get("keywords", [])
+        entities = payload.get("entities", [])
+        terms = [query] + keywords + entities
+        return _normalize_terms(terms)
+    except Exception:
+        return _normalize_terms([query])
 
 
 def _resolve_entity_run_ids(

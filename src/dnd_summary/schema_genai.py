@@ -251,3 +251,21 @@ def events_schema() -> types.Schema:
             )
         },
     )
+
+
+def semantic_search_schema() -> types.Schema:
+    return types.Schema(
+        type=types.Type.OBJECT,
+        required=["keywords", "entities"],
+        properties={
+            "keywords": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(type=types.Type.STRING),
+            ),
+            "entities": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(type=types.Type.STRING),
+            ),
+            "notes": types.Schema(type=types.Type.STRING),
+        },
+    )

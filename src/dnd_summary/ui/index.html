@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DND Chronicle</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="site-header">
+        <div class="brand">
+          <div class="sigil"></div>
+          <div>
+            <p class="eyebrow">Chronicle Desk</p>
+            <h1>DND Chronicle</h1>
+            <p class="subtitle">Session memory, campaign lore, and story beats in one place.</p>
+          </div>
+        </div>
+        <div class="controls">
+          <div class="control-group">
+            <label for="campaignSelect">Campaign</label>
+            <select id="campaignSelect"></select>
+          </div>
+          <div class="control-group search-group">
+            <label for="searchInput">Search</label>
+            <div class="search-row">
+              <input
+                id="searchInput"
+                type="search"
+                placeholder="Search Baba Yaga, magic shop, lost relics..."
+              />
+              <button id="searchButton" type="button">Seek</button>
+            </div>
+            <label class="toggle">
+              <input id="semanticToggle" type="checkbox" checked />
+              <span>Semantic Search</span>
+            </label>
+          </div>
+        </div>
+      </header>
+
+      <div class="layout">
+        <aside class="sidebar">
+          <div class="sidebar-header">
+            <h2>Sessions</h2>
+            <span id="sessionCount" class="count-pill">0</span>
+          </div>
+          <div id="sessionList" class="session-list"></div>
+        </aside>
+
+        <main class="content">
+          <div id="statusLine" class="status">Select a session to begin.</div>
+
+          <section id="summarySection" class="panel">
+            <div class="panel-header">
+              <h2>Session Summary</h2>
+              <div id="sessionMeta" class="meta"></div>
+            </div>
+            <div id="summaryText" class="summary-text"></div>
+            <div id="artifactLinks" class="artifact-links"></div>
+          </section>
+
+          <section id="threadSection" class="panel">
+            <div class="panel-header">
+              <h2>Threads & Quests</h2>
+              <span class="badge">Active Lore</span>
+            </div>
+            <div id="threadList" class="thread-grid"></div>
+          </section>
+
+          <section id="sceneSection" class="panel">
+            <div class="panel-header">
+              <h2>Scenes</h2>
+              <span class="badge">Timeline</span>
+            </div>
+            <div id="sceneList" class="scene-list"></div>
+          </section>
+
+          <section id="eventSection" class="panel">
+            <div class="panel-header">
+              <h2>Events</h2>
+              <span class="badge">Key Moves</span>
+            </div>
+            <div id="eventList" class="event-list"></div>
+          </section>
+
+          <section id="quoteSection" class="panel">
+            <div class="panel-header">
+              <h2>Quotes</h2>
+              <span class="badge">Voices</span>
+            </div>
+            <div id="quoteList" class="quote-grid"></div>
+          </section>
+
+          <section id="entitySection" class="panel">
+            <div class="panel-header">
+              <h2>Entities</h2>
+              <span class="badge">Cast & Places</span>
+            </div>
+            <div id="entityList" class="entity-grid"></div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <div id="searchPanel" class="search-panel hidden">
+      <div class="search-card">
+        <div class="search-header">
+          <div>
+            <p class="eyebrow">Search Results</p>
+            <h3 id="searchTitle">Results</h3>
+            <p id="searchSub" class="meta"></p>
+          </div>
+          <button id="closeSearch" type="button">Close</button>
+        </div>
+        <div id="searchResults" class="search-results"></div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
