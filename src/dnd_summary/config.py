@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="DND_", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="DND_", extra="ignore", env_file=".env")
 
     database_url: str = "postgresql+psycopg://dnd:dnd@localhost:5432/dnd_summary"
     temporal_address: str = "localhost:7233"

@@ -11,6 +11,7 @@ from dnd_summary.db import ENGINE, get_session
 from dnd_summary.llm import LLMClient
 from dnd_summary.models import Artifact, Base, Run, SessionExtraction, Utterance
 from dnd_summary.render import render_summary_docx
+from dnd_summary.schema_genai import summary_plan_schema
 from dnd_summary.schemas import SessionFacts, SummaryPlan
 
 
@@ -70,7 +71,7 @@ async def plan_summary_activity(payload: dict) -> dict:
         )
 
         client = LLMClient()
-        raw_json = client.generate_json(prompt)
+        raw_json = client.generate_json_schema(prompt, schema=summary_plan_schema())
         plan_payload = json.loads(raw_json)
         plan = SummaryPlan.model_validate(plan_payload)
 

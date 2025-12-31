@@ -10,6 +10,7 @@ from dnd_summary.config import settings
 from dnd_summary.db import ENGINE, get_session
 from dnd_summary.llm import LLMClient
 from dnd_summary.models import Base, Run, SessionExtraction, Utterance
+from dnd_summary.schema_genai import session_facts_schema
 from dnd_summary.schemas import SessionFacts
 
 
@@ -51,7 +52,7 @@ async def extract_session_facts_activity(payload: dict) -> dict:
         prompt = prompt_template.format(transcript=transcript_text)
 
         client = LLMClient()
-        raw_json = client.generate_json(prompt)
+        raw_json = client.generate_json_schema(prompt, schema=session_facts_schema())
         payload_json = json.loads(raw_json)
         facts = SessionFacts.model_validate(payload_json)
 

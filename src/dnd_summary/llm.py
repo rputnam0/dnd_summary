@@ -33,3 +33,21 @@ class LLMClient:
             ),
         )
         return response.text or ""
+
+    def generate_json_schema(
+        self,
+        prompt: str,
+        *,
+        schema: types.Schema,
+        system: str | None = None,
+    ) -> str:
+        response = self._client.models.generate_content(
+            model=settings.gemini_model,
+            contents=[types.Content(role="user", parts=[types.Part.from_text(text=prompt)])],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=schema,
+                system_instruction=[system] if system else None,
+            ),
+        )
+        return response.text or ""
