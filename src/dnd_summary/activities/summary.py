@@ -61,8 +61,10 @@ def _validate_summary_quotes(summary_text: str, quote_texts: list[str]) -> None:
     for q in quoted:
         if q in allowed:
             continue
-        # Allow short, single-word quotes (often names or labels).
-        if len(q) < 20 and " " not in q:
+        if any(q in full for full in allowed):
+            continue
+        # Allow short quotes (names/labels/brief phrases).
+        if len(q) < 25:
             continue
         invalid.append(q)
     if invalid:

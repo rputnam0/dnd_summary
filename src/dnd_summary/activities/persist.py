@@ -195,14 +195,28 @@ async def persist_session_facts_activity(payload: dict) -> dict:
         if thread_updates:
             session.add_all(thread_updates)
 
+        metrics = {
+            "mentions": len(facts.mentions),
+            "scenes": len(facts.scenes),
+            "events": len(facts.events),
+            "threads": len(facts.threads),
+            "quotes": len(cleaned_quotes),
+            "quotes_dropped": dropped_quotes,
+            "evidence_dropped": dropped_evidence,
+        }
+        metrics_record = SessionExtraction(
+            run_id=run_id,
+            session_id=session_id,
+            kind="persist_metrics",
+            model="system",
+            prompt_id="persist_session_facts",
+            prompt_version="1",
+            payload=metrics,
+        )
+        session.add(metrics_record)
+
     return {
         "run_id": run_id,
         "session_id": session_id,
-        "mentions": len(facts.mentions),
-        "scenes": len(facts.scenes),
-        "events": len(facts.events),
-        "threads": len(facts.threads),
-        "quotes": len(cleaned_quotes),
-        "quotes_dropped": dropped_quotes,
-        "evidence_dropped": dropped_evidence,
+        **metrics,
     }
