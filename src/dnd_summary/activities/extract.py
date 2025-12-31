@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime
 from pathlib import Path
+from hashlib import sha256
 
 from temporalio import activity
 
@@ -10,7 +12,7 @@ from dnd_summary.config import settings
 from dnd_summary.db import ENGINE, get_session
 from dnd_summary.llm import LLMClient
 from dnd_summary.mappings import load_character_map
-from dnd_summary.models import Base, Run, SessionExtraction, Utterance
+from dnd_summary.models import Base, LLMCall, Run, SessionExtraction, Utterance
 from dnd_summary.schema_genai import session_facts_schema
 from dnd_summary.schemas import SessionFacts
 
@@ -58,7 +60,24 @@ async def extract_session_facts_activity(payload: dict) -> dict:
         )
 
         client = LLMClient()
+        start = time.monotonic()
         raw_json = client.generate_json_schema(prompt, schema=session_facts_schema())
+        latency_ms = int((time.monotonic() - start) * 1000)
+
+        call_record = LLMCall(
+            run_id=run.id,
+            session_id=session_id,
+            kind="extract_session_facts",
+            model=settings.gemini_model,
+            prompt_id="extract_session_facts_v1",
+            prompt_version="1",
+            input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
+            output_hash=sha256(raw_json.encode("utf-8")).hexdigest(),
+            latency_ms=latency_ms,
+            created_at=datetime.utcnow(),
+        )
+        session.add(call_record)
+
         payload_json = json.loads(raw_json)
         facts = SessionFacts.model_validate(payload_json)
 

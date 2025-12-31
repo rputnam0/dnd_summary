@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import time
 import re
 from datetime import datetime
 from pathlib import Path
+from hashlib import sha256
 
 from temporalio import activity
 
@@ -11,7 +13,7 @@ from dnd_summary.config import settings
 from dnd_summary.db import ENGINE, get_session
 from dnd_summary.llm import LLMClient
 from dnd_summary.mappings import load_character_map
-from dnd_summary.models import Artifact, Base, Run, SessionExtraction, Utterance
+from dnd_summary.models import Artifact, Base, LLMCall, Run, SessionExtraction, Utterance
 from dnd_summary.render import render_summary_docx
 from dnd_summary.schema_genai import summary_plan_schema
 from dnd_summary.schemas import SessionFacts, SummaryPlan
@@ -105,7 +107,24 @@ async def plan_summary_activity(payload: dict) -> dict:
         )
 
         client = LLMClient()
+        start = time.monotonic()
         raw_json = client.generate_json_schema(prompt, schema=summary_plan_schema())
+        latency_ms = int((time.monotonic() - start) * 1000)
+
+        session.add(
+            LLMCall(
+                run_id=run.id,
+                session_id=session_id,
+                kind="summary_plan",
+                model=settings.gemini_model,
+                prompt_id="summary_plan_v1",
+                prompt_version="1",
+                input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
+                output_hash=sha256(raw_json.encode("utf-8")).hexdigest(),
+                latency_ms=latency_ms,
+                created_at=datetime.utcnow(),
+            )
+        )
         plan_payload = json.loads(raw_json)
         plan = SummaryPlan.model_validate(plan_payload)
 
@@ -180,7 +199,24 @@ async def write_summary_activity(payload: dict) -> dict:
         )
 
         client = LLMClient()
+        start = time.monotonic()
         summary_text = client.generate_text(prompt)
+        latency_ms = int((time.monotonic() - start) * 1000)
+
+        session.add(
+            LLMCall(
+                run_id=run.id,
+                session_id=session_id,
+                kind="summary_text",
+                model=settings.gemini_model,
+                prompt_id="write_summary_v1",
+                prompt_version="1",
+                input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
+                output_hash=sha256(summary_text.encode("utf-8")).hexdigest(),
+                latency_ms=latency_ms,
+                created_at=datetime.utcnow(),
+            )
+        )
         _validate_summary_quotes(summary_text, list(quote_lookup.values()))
 
         summary_record = SessionExtraction(
