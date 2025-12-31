@@ -17,12 +17,16 @@ from dnd_summary.models import (
 import re
 from difflib import SequenceMatcher
 
-from dnd_summary.schemas import SessionFacts
+from dnd_summary.schemas import EvidenceSpan, SessionFacts
 
 
-def _clean_evidence(utterance_lookup: dict[str, str], evidence_list: list) -> tuple[list, int]:
+def _clean_evidence(
+    utterance_lookup: dict[str, str],
+    evidence_list: list,
+) -> tuple[list, int, int]:
     cleaned = []
     dropped = 0
+    clamped = 0
     for evidence in evidence_list:
         utterance_text = utterance_lookup.get(evidence.utterance_id)
         if utterance_text is None:
@@ -34,11 +38,47 @@ def _clean_evidence(utterance_lookup: dict[str, str], evidence_list: list) -> tu
         if evidence.char_start < 0 or evidence.char_end <= evidence.char_start:
             dropped += 1
             continue
-        if evidence.char_end > len(utterance_text):
+        if evidence.char_start >= len(utterance_text):
             dropped += 1
             continue
+        if evidence.char_end > len(utterance_text):
+            evidence.char_end = len(utterance_text)
+            clamped += 1
+            if evidence.char_end <= evidence.char_start:
+                dropped += 1
+                continue
         cleaned.append(evidence)
-    return cleaned, dropped
+    return cleaned, dropped, clamped
+
+
+def _build_mention_pattern(text: str) -> re.Pattern | None:
+    tokens = re.findall(r"[A-Za-z0-9]+", text)
+    if not tokens:
+        return None
+    if len(tokens) == 1:
+        return re.compile(re.escape(tokens[0]), re.IGNORECASE)
+    pattern = r"\\b" + r"\\W+".join(re.escape(token) for token in tokens) + r"\\b"
+    return re.compile(pattern, re.IGNORECASE)
+
+
+def _find_mention_span(
+    utterances: list[Utterance],
+    mention_text: str,
+) -> EvidenceSpan | None:
+    pattern = _build_mention_pattern(mention_text)
+    if not pattern:
+        return None
+    for utt in utterances:
+        match = pattern.search(utt.text)
+        if match:
+            return EvidenceSpan(
+                utterance_id=utt.id,
+                char_start=match.start(),
+                char_end=match.end(),
+                kind="mention",
+                confidence=0.7,
+            )
+    return None
 
 
 def _normalize_text(text: str) -> str:
@@ -138,6 +178,7 @@ async def persist_session_facts_activity(payload: dict) -> dict:
         utterances = (
             session.query(Utterance)
             .filter_by(session_id=session_id)
+            .order_by(Utterance.start_ms.asc(), Utterance.id.asc())
             .all()
         )
         utterance_lookup = {utt.id: utt.text for utt in utterances}
@@ -149,21 +190,52 @@ async def persist_session_facts_activity(payload: dict) -> dict:
             session.query(model).filter_by(run_id=run_id, session_id=session_id).delete()
 
         dropped_evidence = 0
+        clamped_evidence = 0
         for mention in facts.mentions:
-            mention.evidence, dropped = _clean_evidence(utterance_lookup, mention.evidence)
+            mention.evidence, dropped, clamped = _clean_evidence(
+                utterance_lookup, mention.evidence
+            )
             dropped_evidence += dropped
+            clamped_evidence += clamped
         for scene in facts.scenes:
-            scene.evidence, dropped = _clean_evidence(utterance_lookup, scene.evidence)
+            scene.evidence, dropped, clamped = _clean_evidence(
+                utterance_lookup, scene.evidence
+            )
             dropped_evidence += dropped
+            clamped_evidence += clamped
         for event in facts.events:
-            event.evidence, dropped = _clean_evidence(utterance_lookup, event.evidence)
+            event.evidence, dropped, clamped = _clean_evidence(
+                utterance_lookup, event.evidence
+            )
             dropped_evidence += dropped
+            clamped_evidence += clamped
         for thread in facts.threads:
-            thread.evidence, dropped = _clean_evidence(utterance_lookup, thread.evidence)
+            thread.evidence, dropped, clamped = _clean_evidence(
+                utterance_lookup, thread.evidence
+            )
             dropped_evidence += dropped
+            clamped_evidence += clamped
             for update in thread.updates:
-                update.evidence, dropped = _clean_evidence(utterance_lookup, update.evidence)
+                update.evidence, dropped, clamped = _clean_evidence(
+                    utterance_lookup, update.evidence
+                )
                 dropped_evidence += dropped
+                clamped_evidence += clamped
+
+        mention_repairs = 0
+        mentions_dropped = 0
+        repaired_mentions = []
+        for mention in facts.mentions:
+            if not mention.evidence:
+                repaired = _find_mention_span(utterances, mention.text)
+                if repaired:
+                    mention.evidence = [repaired]
+                    mention_repairs += 1
+            if not mention.evidence:
+                mentions_dropped += 1
+                continue
+            repaired_mentions.append(mention)
+        facts.mentions = repaired_mentions
 
         mentions = [
             Mention(
@@ -272,6 +344,9 @@ async def persist_session_facts_activity(payload: dict) -> dict:
             "quotes": len(cleaned_quotes),
             "quotes_dropped": dropped_quotes,
             "evidence_dropped": dropped_evidence,
+            "evidence_clamped": clamped_evidence,
+            "mentions_repaired": mention_repairs,
+            "mentions_dropped_no_evidence": mentions_dropped,
             "clean_text_dropped": clean_text_dropped,
         }
         metrics_record = SessionExtraction(

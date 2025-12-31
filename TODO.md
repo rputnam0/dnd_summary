@@ -8,19 +8,25 @@
 - DSPy eval harness in place with legacy analysis docs used to bootstrap a rough gold set; supports NPC/location/item/faction tasks.
 
 ## Next commit plan (near-term)
-1) Eval dataset cleanup + overrides  
-   - Add `evals/overrides/*.json` for manual fixes (per session or per task).  
-   - Update dataset builder to merge overrides and track `gold_source`.
+1) Extraction quality pass vs legacy analysis docs  
+   - Compare extracted NPCs/locations/threads/events to `legacy/` analysis docs.  
+   - Adjust `prompts/extract_session_facts_v1.txt` to close gaps.
 
-2) Thread evidence enrichment  
-   - Add optional event linkage in extraction schema (thread updates include `related_event_ids`).  
-   - Use event evidence to populate thread mention/quote endpoints.
+2) Quote coverage tuning  
+   - Increase clean_text coverage, keep in-character lines only.  
+   - Add a prompt reminder to avoid DM framing ("she says") inside quotes.
+
+3) Optional evidence repair step  
+   - If evidence gaps persist, add a targeted LLM repair activity for missing spans.  
+   - Gate by feature flag to keep costs low.
 
 ## Recently completed
 - Entity-centric API endpoints (`/entities/{entity_id}/mentions|quotes|events`)
 - Session bundle endpoint (`/sessions/{session_id}/bundle`) for UI call reduction
 - Quote clean_text support with display_text for UI
 - Quality report extraction + inspect_run output (evidence coverage, LLM call stats)
+- Thread update evidence includes related event IDs
+- Evidence clamping + mention repair/drop for invalid spans
 
 ## Mid-term
 - Add correction loop (rename/merge entities, mark false positives, lock canonical names).  

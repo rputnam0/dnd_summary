@@ -67,13 +67,21 @@ Rules:
 - Use character names (in-world), not player names, when referring to PCs.
 - Prefer the character map below when naming PCs or speakers.
 - Use ONLY utterance_id values that appear in the transcript below.
-- char_start/char_end must be offsets into the referenced utterance text.
+- char_start/char_end must be offsets into the referenced utterance text (0-based, within the utterance text only).
+- char_end must be > char_start and within the utterance text length (never 0,0).
+- Each evidence entry must include char_start/char_end and should point to the smallest substring that supports the claim.
 - Use related_event_indexes to point to the relevant item(s) in the events list (0-based).
 - Quotes must isolate the in-character line only (exclude narration like "she goes", "he says", "they say").
 - If a quote needs light cleanup for readability, include a clean_text version while keeping char_start/char_end grounded in the utterance.
 - Do not skip interesting/funny quotes because of minor transcription noise; use clean_text instead.
+- Every mention/scene/event/thread/update MUST include at least one evidence span with char_start and char_end populated.
+- If you cannot find a perfect supporting span, use the best approximate span and lower confidence; do NOT leave evidence empty.
 - If you are unsure, lower confidence instead of inventing facts.
 - Prefer completeness over brevity; include NPCs, locations, items, factions, relationships, money, and combat outcomes.
+
+Validation checklist before output:
+- No evidence list is empty.
+- Every evidence entry includes char_start and char_end.
 
 Character Map (participant -> character, JSON):
 {character_map}
