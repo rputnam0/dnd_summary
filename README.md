@@ -16,10 +16,22 @@ Services:
 - Temporal UI: `http://localhost:8080`
 - App Postgres: `localhost:5432` (DB: `dnd_summary`)
 
+## Python setup (uv)
+
+Use `uv` with `pyproject.toml` (no `requirements.txt`).
+
+- Create venv + install deps:
+  - `uv venv`
+  - `uv pip install -e ".[dev]"`
+- Run linters:
+  - `uv run black .`
+  - `uv run flake8`
+- Run tests:
+  - `uv run pytest`
+
 ## Canonical transcript inputs
 
 Canonical ingestion source lives under `transcripts/` (multi-campaign):
 - `transcripts/campaigns/<campaign_slug>/sessions/<session_slug>/...`
 
 The pipeline will prefer `.jsonl` transcripts when present, falling back to `.txt`.
-

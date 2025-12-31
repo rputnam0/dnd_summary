@@ -15,6 +15,13 @@ dependencies = [
   "google-genai>=1.0.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "black>=24.3",
+  "flake8>=7.0",
+  "pytest>=8.2",
+]
+
 [project.scripts]
 dnd-summary = "dnd_summary.cli:app"
 
@@ -23,4 +30,3 @@ line-length = 100
 
 [tool.black]
 line-length = 100
-
