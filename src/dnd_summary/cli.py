@@ -54,6 +54,7 @@ def run_session(campaign_slug: str, session_slug: str) -> None:
 def run_session_local(campaign_slug: str, session_slug: str) -> None:
     """Run the pipeline locally without Temporal (for quick testing)."""
     from dnd_summary.activities.extract import extract_session_facts_activity
+    from dnd_summary.activities.cache_cleanup import release_transcript_cache_activity
     from dnd_summary.activities.persist import persist_session_facts_activity
     from dnd_summary.activities.resolve import resolve_entities_activity
     from dnd_summary.activities.run_status import update_run_status_activity
@@ -79,6 +80,9 @@ def run_session_local(campaign_slug: str, session_slug: str) -> None:
             await update_run_status_activity(
                 {"run_id": transcript["run_id"], "status": "failed"}
             )
+            await release_transcript_cache_activity(
+                {"run_id": transcript["run_id"], "status": "failed"}
+            )
             raise
         try:
             await plan_summary_activity(extract_payload)
@@ -88,8 +92,14 @@ def run_session_local(campaign_slug: str, session_slug: str) -> None:
             await update_run_status_activity(
                 {"run_id": transcript["run_id"], "status": "partial"}
             )
+            await release_transcript_cache_activity(
+                {"run_id": transcript["run_id"], "status": "partial"}
+            )
             raise
         await update_run_status_activity(
+            {"run_id": transcript["run_id"], "status": "completed"}
+        )
+        await release_transcript_cache_activity(
             {"run_id": transcript["run_id"], "status": "completed"}
         )
 

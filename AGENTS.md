@@ -14,6 +14,9 @@
 - `python3 -m dnd_summary.cli show-config`: verify configuration defaults.
 - `python3 -m dnd_summary.cli worker`: run the Temporal worker locally.
 - `python3 -m dnd_summary.cli run-session <campaign> <session>`: start a workflow run.
+- `uv run dnd-summary list-caches`: list transcript caches (use `--verify-remote` to confirm cache existence).
+- `uv run dnd-summary clear-caches --all`: delete cached transcripts and mark them invalidated in the DB.
+- `uv run dnd-summary inspect-usage <campaign> <session>`: summarize LLM token usage by call.
  
 Dependency management:
 - Use `uv` with `pyproject.toml` (no `requirements.txt` or `pip` installs).
@@ -41,3 +44,5 @@ Dependency management:
 - User data lives under `transcripts/campaigns/` and should not be committed.
 - Store credentials via environment variables (see `src/dnd_summary/config.py`).
 - Treat transcripts and derived outputs as sensitive campaign data.
+- Explicit transcript caching is enabled by default; caches are released after each run unless disabled via config.
+- For local prompt testing, set `DND_CACHE_RELEASE_ON_COMPLETE=false` and clear caches when finished.

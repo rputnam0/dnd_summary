@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-3-flash"
     enable_explicit_cache: bool = True
     cache_ttl_seconds: int = 3600
+    cache_release_on_complete: bool = True
+    cache_release_on_partial: bool = True
+    cache_release_on_failed: bool = True
     llm_max_retries: int = 3
     llm_retry_min_seconds: float = 1.0
     llm_retry_max_seconds: float = 12.0

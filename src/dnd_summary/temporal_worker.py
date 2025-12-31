@@ -4,6 +4,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from dnd_summary.activities.extract import extract_session_facts_activity
+from dnd_summary.activities.cache_cleanup import release_transcript_cache_activity
 from dnd_summary.activities.persist import persist_session_facts_activity
 from dnd_summary.activities.resolve import resolve_entities_activity
 from dnd_summary.activities.run_status import update_run_status_activity
@@ -32,6 +33,7 @@ async def run_worker() -> None:
             persist_session_facts_activity,
             resolve_entities_activity,
             update_run_status_activity,
+            release_transcript_cache_activity,
             plan_summary_activity,
             write_summary_activity,
             render_summary_docx_activity,

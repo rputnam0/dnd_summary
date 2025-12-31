@@ -51,6 +51,11 @@ class ProcessSessionWorkflow:
                 {"run_id": transcript["run_id"], "status": "failed"},
                 start_to_close_timeout=timedelta(minutes=1),
             )
+            await workflow.execute_activity(
+                "release_transcript_cache_activity",
+                {"run_id": transcript["run_id"], "status": "failed"},
+                start_to_close_timeout=timedelta(minutes=2),
+            )
             raise
 
         try:
@@ -84,12 +89,22 @@ class ProcessSessionWorkflow:
                 {"run_id": transcript["run_id"], "status": "partial"},
                 start_to_close_timeout=timedelta(minutes=1),
             )
+            await workflow.execute_activity(
+                "release_transcript_cache_activity",
+                {"run_id": transcript["run_id"], "status": "partial"},
+                start_to_close_timeout=timedelta(minutes=2),
+            )
             raise
 
         await workflow.execute_activity(
             "update_run_status_activity",
             {"run_id": transcript["run_id"], "status": "completed"},
             start_to_close_timeout=timedelta(minutes=1),
+        )
+        await workflow.execute_activity(
+            "release_transcript_cache_activity",
+            {"run_id": transcript["run_id"], "status": "completed"},
+            start_to_close_timeout=timedelta(minutes=2),
         )
         return {
             "status": "ok",
