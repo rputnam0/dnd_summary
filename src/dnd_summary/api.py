@@ -1153,6 +1153,27 @@ def get_summary(
         return {"text": summary.payload.get("text", "")}
 
 
+@app.get("/sessions/{session_id}/runs")
+def list_runs(session_id: str) -> list[dict]:
+    with get_session() as session:
+        runs = (
+            session.query(Run)
+            .filter_by(session_id=session_id)
+            .order_by(Run.created_at.desc())
+            .all()
+        )
+        return [
+            {
+                "id": run.id,
+                "transcript_hash": run.transcript_hash,
+                "pipeline_version": run.pipeline_version,
+                "status": run.status,
+                "created_at": run.created_at.isoformat(),
+            }
+            for run in runs
+        ]
+
+
 @app.get("/sessions/{session_id}/bundle")
 def get_session_bundle(
     session_id: str,

@@ -289,6 +289,27 @@ button:hover {
   font-family: "Source Sans 3", sans-serif;
 }
 
+.meta-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.run-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+}
+
+.run-select select {
+  padding: 6px 10px;
+  min-width: 180px;
+}
+
 .summary-text p {
   margin: 0 0 12px;
   line-height: 1.6;

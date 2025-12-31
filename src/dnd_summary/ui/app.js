@@ -6,6 +6,7 @@ const state = {
   sessionMap: {},
   selectedCampaign: null,
   selectedSession: null,
+  selectedRun: null,
   bundle: null,
 };
 
@@ -15,6 +16,7 @@ const elements = {
   sessionCount: document.getElementById("sessionCount"),
   statusLine: document.getElementById("statusLine"),
   sessionMeta: document.getElementById("sessionMeta"),
+  runSelect: document.getElementById("runSelect"),
   runMetrics: document.getElementById("runMetrics"),
   summaryText: document.getElementById("summaryText"),
   artifactLinks: document.getElementById("artifactLinks"),
@@ -402,6 +404,7 @@ async function loadSessions() {
   state.sessions = sessions;
   state.sessionMap = Object.fromEntries(sessions.map((s) => [s.id, s]));
   renderSessions();
+  clearNode(elements.runSelect);
   setStatus("Select a session to begin.");
 }
 
@@ -410,21 +413,50 @@ async function loadSession(sessionId) {
     return;
   }
   state.selectedSession = sessionId;
+  state.selectedRun = null;
   renderSessions();
   const session = state.sessionMap[sessionId];
   renderSessionMeta(session);
-  setStatus("Loading session bundle...");
-  const bundle = await fetchJson(`/sessions/${sessionId}/bundle`);
-  state.bundle = bundle;
-  renderBundle(bundle);
-  const runShort = bundle.run_id ? bundle.run_id.slice(0, 8) : "unknown";
-  setStatus(`Session loaded. Run ${runShort}.`);
+  setStatus("Loading session runs...");
+  const runs = await fetchJson(`/sessions/${sessionId}/runs`);
+  populateRunSelect(runs);
+  const activeRun = runs.length > 0 ? runs[0].id : null;
+  state.selectedRun = activeRun;
+  await loadBundle(sessionId, activeRun);
 }
 
 async function jumpToSession(sessionId) {
   if (!sessionId) return;
   await loadSession(sessionId);
   closeSearch();
+}
+
+function populateRunSelect(runs) {
+  clearNode(elements.runSelect);
+  if (!runs || runs.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No runs";
+    elements.runSelect.appendChild(option);
+    return;
+  }
+  runs.forEach((run, index) => {
+    const option = document.createElement("option");
+    option.value = run.id;
+    const created = new Date(run.created_at).toLocaleString();
+    option.textContent = `${index === 0 ? "Latest" : "Run"} ${created}`;
+    elements.runSelect.appendChild(option);
+  });
+}
+
+async function loadBundle(sessionId, runId) {
+  setStatus("Loading session bundle...");
+  const query = runId ? `?run_id=${runId}` : "";
+  const bundle = await fetchJson(`/sessions/${sessionId}/bundle${query}`);
+  state.bundle = bundle;
+  renderBundle(bundle);
+  const runShort = bundle.run_id ? bundle.run_id.slice(0, 8) : "unknown";
+  setStatus(`Session loaded. Run ${runShort}.`);
 }
 
 async function openEntity(entity) {
@@ -673,6 +705,13 @@ async function init() {
   elements.entityFilter.addEventListener("change", () => {
     if (state.bundle) {
       renderEntities(state.bundle.entities || []);
+    }
+  });
+  elements.runSelect.addEventListener("change", async (event) => {
+    const runId = event.target.value;
+    state.selectedRun = runId;
+    if (state.selectedSession) {
+      await loadBundle(state.selectedSession, runId);
     }
   });
 
