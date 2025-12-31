@@ -82,10 +82,15 @@ function clearNode(node) {
   }
 }
 
-function renderParagraphs(text) {
+function renderParagraphs(text, runStatus) {
   clearNode(elements.summaryText);
   if (!text) {
-    elements.summaryText.textContent = "No summary generated yet.";
+    if (runStatus && runStatus !== "completed") {
+      elements.summaryText.textContent =
+        "Summary pending (run not completed yet).";
+    } else {
+      elements.summaryText.textContent = "No summary generated yet.";
+    }
     return;
   }
   text
@@ -103,12 +108,13 @@ function renderMetrics(bundle) {
   if (!bundle) return;
   const metrics = [
     `Run ${bundle.run_id ? bundle.run_id.slice(0, 8) : "n/a"}`,
+    bundle.run_status ? `Status ${bundle.run_status}` : null,
     `${bundle.scenes ? bundle.scenes.length : 0} scenes`,
     `${bundle.events ? bundle.events.length : 0} events`,
     `${bundle.threads ? bundle.threads.length : 0} threads`,
     `${bundle.quotes ? bundle.quotes.length : 0} quotes`,
     `${bundle.entities ? bundle.entities.length : 0} entities`,
-  ];
+  ].filter(Boolean);
   metrics.forEach((metric) => {
     const badge = document.createElement("span");
     badge.textContent = metric;
@@ -522,7 +528,7 @@ function renderBundle(bundle) {
     return;
   }
   renderMetrics(bundle);
-  renderParagraphs(bundle.summary);
+  renderParagraphs(bundle.summary, bundle.run_status);
   renderArtifacts(bundle.artifacts || []);
   renderThreads(bundle.threads || []);
   renderScenes(bundle.scenes || []);
@@ -608,8 +614,7 @@ async function loadSession(sessionId) {
   renderSessionMeta(session);
   setStatus("Loading session runs...");
   const runs = await fetchJson(`/sessions/${sessionId}/runs`);
-  populateRunSelect(runs);
-  const activeRun = runs.length > 0 ? runs[0].id : null;
+  const activeRun = populateRunSelect(runs);
   state.selectedRun = activeRun;
   await loadBundle(sessionId, activeRun);
 }
@@ -695,16 +700,21 @@ function populateRunSelect(runs) {
     option.value = "";
     option.textContent = "No runs";
     elements.runSelect.appendChild(option);
-    return;
+    return null;
   }
+  const completed = runs.find((run) => run.status === "completed");
+  const selectedId = completed ? completed.id : runs[0].id;
   runs.forEach((run, index) => {
     const option = document.createElement("option");
     option.value = run.id;
     const created = new Date(run.created_at).toLocaleString();
-    option.textContent = `${index === 0 ? "Latest" : "Run"} ${created}`;
+    const label = index === 0 ? "Latest" : "Run";
+    const status = run.status || "unknown";
+    option.textContent = `${label} • ${status} • ${created}`;
     elements.runSelect.appendChild(option);
   });
-  elements.runSelect.value = runs[0].id;
+  elements.runSelect.value = selectedId;
+  return selectedId;
 }
 
 async function loadBundle(sessionId, runId) {

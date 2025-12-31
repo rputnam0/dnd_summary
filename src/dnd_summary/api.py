@@ -1321,6 +1321,7 @@ def get_session_bundle(
 ) -> dict:
     with get_session() as session:
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
+        run = session.query(Run).filter_by(id=resolved_run_id).first()
 
         summary = (
             session.query(SessionExtraction)
@@ -1392,6 +1393,8 @@ def get_session_bundle(
         return {
             "session_id": session_id,
             "run_id": resolved_run_id,
+            "run_status": run.status if run else None,
+            "run_created_at": run.created_at.isoformat() if run else None,
             "summary": summary.payload.get("text", "") if summary else "",
             "artifacts": [
                 {
