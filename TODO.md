@@ -16,6 +16,8 @@
    - If evidence gaps persist, add a targeted LLM repair activity for missing spans.  
    - Gate by feature flag to keep costs low.
 
+3) QA follow-up: ensure partial run status displays when summary fails
+
 ## Recently completed
 - Entity-centric API endpoints (`/entities/{entity_id}/mentions|quotes|events`)
 - Session bundle endpoint (`/sessions/{session_id}/bundle`) for UI call reduction
@@ -29,6 +31,7 @@
 - Quote dedupe in persist step + quote fallback threshold raised
 - Run status updates (completed/failed) + API prefers completed runs
 - LLM retry/backoff for 429/5xx errors
+- Partial run status for summary failures + UI messaging
 
 ## Mid-term
 - Add correction loop (rename/merge entities, mark false positives, lock canonical names).  

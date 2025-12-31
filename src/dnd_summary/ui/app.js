@@ -86,8 +86,16 @@ function renderParagraphs(text, runStatus) {
   clearNode(elements.summaryText);
   if (!text) {
     if (runStatus && runStatus !== "completed") {
-      elements.summaryText.textContent =
-        "Summary pending (run not completed yet).";
+      if (runStatus === "failed") {
+        elements.summaryText.textContent =
+          "Run failed before summary generation.";
+      } else if (runStatus === "partial") {
+        elements.summaryText.textContent =
+          "Summary failed, but structured data is available.";
+      } else {
+        elements.summaryText.textContent =
+          "Summary pending (run not completed yet).";
+      }
     } else {
       elements.summaryText.textContent = "No summary generated yet.";
     }

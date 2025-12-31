@@ -263,6 +263,11 @@ button:hover {
   color: #a9d4ff;
 }
 
+.session-status.partial {
+  border-color: rgba(207, 174, 88, 0.7);
+  color: #f2d48a;
+}
+
 .content {
   display: flex;
   flex-direction: column;

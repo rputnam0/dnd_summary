@@ -74,17 +74,23 @@ def run_session_local(campaign_slug: str, session_slug: str) -> None:
             await extract_session_facts_activity(extract_payload)
             await persist_session_facts_activity(extract_payload)
             await resolve_entities_activity(extract_payload)
-            await plan_summary_activity(extract_payload)
-            await write_summary_activity(extract_payload)
-            await render_summary_docx_activity(extract_payload)
-            await update_run_status_activity(
-                {"run_id": transcript["run_id"], "status": "completed"}
-            )
         except Exception:
             await update_run_status_activity(
                 {"run_id": transcript["run_id"], "status": "failed"}
             )
             raise
+        try:
+            await plan_summary_activity(extract_payload)
+            await write_summary_activity(extract_payload)
+            await render_summary_docx_activity(extract_payload)
+        except Exception:
+            await update_run_status_activity(
+                {"run_id": transcript["run_id"], "status": "partial"}
+            )
+            raise
+        await update_run_status_activity(
+            {"run_id": transcript["run_id"], "status": "completed"}
+        )
 
     asyncio.run(_run())
 
