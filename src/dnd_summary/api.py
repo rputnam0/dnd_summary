@@ -224,6 +224,7 @@ def list_entity_quotes(
                 "char_end": q.char_end,
                 "speaker": q.speaker,
                 "note": q.note,
+                "clean_text": q.clean_text,
             }
             for q in quotes
         ]
@@ -306,6 +307,7 @@ def list_quotes(
                 "char_end": q.char_end,
                 "speaker": q.speaker,
                 "note": q.note,
+                "clean_text": q.clean_text,
             }
             for q in quotes
         ]
@@ -748,6 +750,7 @@ def list_thread_quotes(thread_id: str) -> list[dict]:
                 "char_end": q.char_end,
                 "speaker": q.speaker,
                 "note": q.note,
+                "clean_text": q.clean_text,
             }
             for q in quotes
         ]

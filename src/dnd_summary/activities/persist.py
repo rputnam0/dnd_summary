@@ -153,6 +153,7 @@ async def persist_session_facts_activity(payload: dict) -> dict:
                 char_end=quote.char_end,
                 speaker=quote.speaker,
                 note=quote.note,
+                clean_text=quote.clean_text,
             )
             for quote in cleaned_quotes
         ]

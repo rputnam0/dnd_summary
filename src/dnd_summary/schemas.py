@@ -67,6 +67,7 @@ class QuoteCandidate(BaseModel):
     char_end: int | None = None
     speaker: str | None = None
     note: str | None = None
+    clean_text: str | None = None
 
 
 class ThreadUpdate(BaseModel):

@@ -198,6 +198,7 @@ class Quote(Base):
     char_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
     speaker: Mapped[str | None] = mapped_column(String, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    clean_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

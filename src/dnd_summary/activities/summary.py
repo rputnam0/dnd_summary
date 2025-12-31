@@ -35,6 +35,8 @@ def _format_transcript(utterances: list[Utterance], character_map: dict[str, str
 
 
 def _quote_text(utterance: str, quote: Quote) -> str:
+    if quote.clean_text:
+        return quote.clean_text.strip()
     if quote.char_start is None or quote.char_end is None:
         return utterance.strip()
     return utterance[quote.char_start : quote.char_end].strip()

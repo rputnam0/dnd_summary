@@ -8,6 +8,7 @@ Requirements:
 - Write 600–1200 words unless the session is unusually short.
 - Use character names for PCs (never player names); see the character map below.
 - Quotes should read as the character speaking; avoid narration like "she goes".
+- Do not mention the DM, players, or table talk; keep all dialogue in-world.
 
 Summary plan (JSON):
 {summary_plan}

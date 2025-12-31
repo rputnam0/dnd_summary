@@ -57,7 +57,8 @@ Return ONLY valid JSON matching this schema:
       "char_start": 0,
       "char_end": 1,
       "speaker": "string or null",
-      "note": "string or null"
+      "note": "string or null",
+      "clean_text": "string or null"
     }}
   ]
 }}
@@ -69,7 +70,8 @@ Rules:
 - char_start/char_end must be offsets into the referenced utterance text.
 - Use related_event_indexes to point to the relevant item(s) in the events list (0-based).
 - Quotes must isolate the in-character line only (exclude narration like "she goes", "he says", "they say").
-- If a quote is messy or garbled, skip it instead of inventing edits.
+- If a quote needs light cleanup for readability, include a clean_text version while keeping char_start/char_end grounded in the utterance.
+- Do not skip interesting/funny quotes because of minor transcription noise; use clean_text instead.
 - If you are unsure, lower confidence instead of inventing facts.
 - Prefer completeness over brevity; include NPCs, locations, items, factions, relationships, money, and combat outcomes.
 

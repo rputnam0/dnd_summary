@@ -154,6 +154,7 @@ def session_facts_schema() -> types.Schema:
                         "char_end": types.Schema(type=types.Type.INTEGER),
                         "speaker": types.Schema(type=types.Type.STRING),
                         "note": types.Schema(type=types.Type.STRING),
+                        "clean_text": types.Schema(type=types.Type.STRING),
                     },
                 ),
             ),
