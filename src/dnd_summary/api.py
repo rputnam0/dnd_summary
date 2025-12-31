@@ -828,6 +828,159 @@ def get_summary(
         return {"text": summary.payload.get("text", "")}
 
 
+@app.get("/sessions/{session_id}/bundle")
+def get_session_bundle(
+    session_id: str,
+    run_id: Annotated[str | None, Query()] = None,
+) -> dict:
+    with get_session() as session:
+        resolved_run_id = _resolve_run_id(session, session_id, run_id)
+
+        summary = (
+            session.query(SessionExtraction)
+            .filter_by(session_id=session_id, run_id=resolved_run_id, kind="summary_text")
+            .order_by(SessionExtraction.created_at.desc())
+            .first()
+        )
+        artifacts = (
+            session.query(Artifact)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
+            .all()
+        )
+        quotes = (
+            session.query(Quote)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
+            .all()
+        )
+        utterance_lookup = _utterance_lookup(session, {session_id})
+
+        scenes = (
+            session.query(Scene)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
+            .order_by(Scene.start_ms.asc(), Scene.id.asc())
+            .all()
+        )
+        events = (
+            session.query(Event)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
+            .order_by(Event.start_ms.asc(), Event.id.asc())
+            .all()
+        )
+        threads = (
+            session.query(Thread)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
+            .order_by(Thread.created_at.asc(), Thread.id.asc())
+            .all()
+        )
+        thread_updates = (
+            session.query(ThreadUpdate)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
+            .order_by(ThreadUpdate.created_at.asc(), ThreadUpdate.id.asc())
+            .all()
+        )
+        updates_by_thread: dict[str, list[dict]] = {}
+        for update in thread_updates:
+            updates_by_thread.setdefault(update.thread_id, []).append(
+                {
+                    "id": update.id,
+                    "update_type": update.update_type,
+                    "note": update.note,
+                    "evidence": update.evidence,
+                    "related_event_ids": update.related_event_ids,
+                    "created_at": update.created_at.isoformat(),
+                }
+            )
+
+        entities = (
+            session.query(Entity)
+            .join(EntityMention, EntityMention.entity_id == Entity.id)
+            .filter(
+                EntityMention.session_id == session_id,
+                EntityMention.run_id == resolved_run_id,
+            )
+            .order_by(Entity.entity_type.asc(), Entity.canonical_name.asc())
+            .distinct()
+            .all()
+        )
+
+        return {
+            "session_id": session_id,
+            "run_id": resolved_run_id,
+            "summary": summary.payload.get("text", "") if summary else "",
+            "artifacts": [
+                {
+                    "id": a.id,
+                    "kind": a.kind,
+                    "path": a.path,
+                    "meta": a.meta,
+                }
+                for a in artifacts
+            ],
+            "quotes": [
+                {
+                    "id": q.id,
+                    "utterance_id": q.utterance_id,
+                    "char_start": q.char_start,
+                    "char_end": q.char_end,
+                    "speaker": q.speaker,
+                    "note": q.note,
+                    "clean_text": q.clean_text,
+                    "display_text": _quote_display_text(q, utterance_lookup),
+                }
+                for q in quotes
+            ],
+            "scenes": [
+                {
+                    "id": s.id,
+                    "title": s.title,
+                    "summary": s.summary,
+                    "location": s.location,
+                    "start_ms": s.start_ms,
+                    "end_ms": s.end_ms,
+                    "participants": s.participants,
+                    "evidence": s.evidence,
+                }
+                for s in scenes
+            ],
+            "events": [
+                {
+                    "id": e.id,
+                    "event_type": e.event_type,
+                    "summary": e.summary,
+                    "start_ms": e.start_ms,
+                    "end_ms": e.end_ms,
+                    "entities": e.entities,
+                    "evidence": e.evidence,
+                    "confidence": e.confidence,
+                }
+                for e in events
+            ],
+            "threads": [
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "kind": t.kind,
+                    "status": t.status,
+                    "summary": t.summary,
+                    "evidence": t.evidence,
+                    "confidence": t.confidence,
+                    "created_at": t.created_at.isoformat(),
+                    "updates": updates_by_thread.get(t.id, []),
+                }
+                for t in threads
+            ],
+            "entities": [
+                {
+                    "id": e.id,
+                    "name": e.canonical_name,
+                    "type": e.entity_type,
+                    "description": e.description,
+                }
+                for e in entities
+            ],
+        }
+
+
 def _thread_event_utterance_ids(
     session,
     thread: Thread,
