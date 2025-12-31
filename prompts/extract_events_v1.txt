@@ -1,0 +1,37 @@
+You are extracting missing session events from a D&D transcript.
+
+Return ONLY valid JSON matching this schema:
+{{
+  "events": [
+    {{
+      "event_type": "combat|social|travel|discovery|loot|economy|relationship|thread_update|rules|generic",
+      "start_ms": 0,
+      "end_ms": 0,
+      "summary": "string",
+      "entities": ["string"],
+      "evidence": [{{"utterance_id": "string", "char_start": 0, "char_end": 1, "kind": "support", "confidence": 0.0}}],
+      "confidence": 0.0
+    }}
+  ]
+}}
+
+Rules:
+- Use character names (in-world), not player names, when referring to PCs.
+- Prefer the character map below when naming PCs or speakers.
+- Use ONLY utterance_id values that appear in the transcript below.
+- utterance_id must be the bracketed ID, not the timestamp range.
+- char_start/char_end must be offsets into the referenced utterance text (0-based, within the utterance text only).
+- char_end must be > char_start and within the utterance text length (never 0,0).
+- Each event MUST include at least one evidence span with char_start and char_end populated.
+- Include events for quest offers, major reveals, travel transitions, purchases, combats, and crimes.
+- Do NOT repeat events already listed below; only add missing events.
+- Aim to reach at least {min_events} total events when combined with the existing list.
+
+Existing events (JSON summaries):
+{existing_events}
+
+Character Map (participant -> character, JSON):
+{character_map}
+
+Transcript (each line includes the utterance_id):
+{transcript}

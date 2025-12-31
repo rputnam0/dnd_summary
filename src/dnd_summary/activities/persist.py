@@ -94,34 +94,131 @@ def _clean_text_similarity(raw: str, clean: str) -> float:
     return SequenceMatcher(None, raw_norm, clean_norm).ratio()
 
 
+def _find_quote_span(text: str, clean_text: str | None) -> tuple[int, int] | None:
+    if not clean_text:
+        return None
+    cleaned = clean_text.strip()
+    if not cleaned:
+        return None
+    lower_text = text.lower()
+    lower_clean = cleaned.lower()
+    idx = lower_text.find(lower_clean)
+    if idx == -1:
+        return None
+    return idx, idx + len(cleaned)
+
+
+def _recover_utterance_by_time(
+    utterances: list[Utterance],
+    start_ms: int,
+    end_ms: int,
+) -> Utterance | None:
+    best = None
+    best_overlap = 0
+    for utt in utterances:
+        if utt.start_ms <= start_ms and utt.end_ms >= end_ms:
+            return utt
+        overlap = min(end_ms, utt.end_ms) - max(start_ms, utt.start_ms)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best = utt
+    if best_overlap > 0:
+        return best
+    return None
+
+
+def _fallback_span_by_time(
+    utterances: list[Utterance],
+    start_ms: int,
+    end_ms: int,
+) -> EvidenceSpan | None:
+    if not utterances:
+        return None
+    candidate = _recover_utterance_by_time(utterances, start_ms, end_ms)
+    if not candidate:
+        return None
+    if not candidate.text:
+        return None
+    return EvidenceSpan(
+        utterance_id=candidate.id,
+        char_start=0,
+        char_end=len(candidate.text),
+        kind="support",
+        confidence=0.3,
+    )
+
+
 def _clean_quotes(
     utterance_lookup: dict[str, str],
+    utterances: list[Utterance],
     facts: SessionFacts,
-) -> tuple[list, int, int]:
+) -> tuple[list, int, int, int]:
     cleaned = []
     dropped = 0
     clean_text_dropped = 0
+    clamped = 0
     for quote in facts.quotes:
         utterance_text = utterance_lookup.get(quote.utterance_id)
+        if utterance_text is None and quote.utterance_id:
+            match = re.match(r"^(\\d+)-(\\d+)$", quote.utterance_id)
+            if match:
+                start_ms = int(match.group(1))
+                end_ms = int(match.group(2))
+                recovered = _recover_utterance_by_time(utterances, start_ms, end_ms)
+                if recovered:
+                    quote.utterance_id = recovered.id
+                    utterance_text = recovered.text
+                    clamped += 1
+            if utterance_text is None and quote.clean_text:
+                for utt in utterances:
+                    span = _find_quote_span(utt.text, quote.clean_text)
+                    if span:
+                        quote.utterance_id = utt.id
+                        quote.char_start, quote.char_end = span
+                        utterance_text = utt.text
+                        clamped += 1
+                        break
         if utterance_text is None:
             dropped += 1
             continue
         if quote.char_start is None or quote.char_end is None:
-            dropped += 1
-            continue
+            if not utterance_text:
+                dropped += 1
+                continue
+            span = _find_quote_span(utterance_text, quote.clean_text)
+            if span:
+                quote.char_start, quote.char_end = span
+            else:
+                quote.char_start = 0
+                quote.char_end = len(utterance_text)
+            clamped += 1
         if quote.char_start < 0 or quote.char_end <= quote.char_start:
+            if not utterance_text:
+                dropped += 1
+                continue
+            span = _find_quote_span(utterance_text, quote.clean_text)
+            if span:
+                quote.char_start, quote.char_end = span
+            else:
+                quote.char_start = 0
+                quote.char_end = len(utterance_text)
+            clamped += 1
+        if quote.char_start >= len(utterance_text):
             dropped += 1
             continue
         if quote.char_end > len(utterance_text):
-            dropped += 1
-            continue
+            quote.char_end = len(utterance_text)
+            clamped += 1
+            if quote.char_end <= quote.char_start:
+                dropped += 1
+                continue
         if quote.clean_text:
             raw_span = utterance_text[quote.char_start : quote.char_end]
             if _clean_text_similarity(raw_span, quote.clean_text) < 0.6:
                 quote.clean_text = None
                 clean_text_dropped += 1
         cleaned.append(quote)
-    return cleaned, dropped, clean_text_dropped
+    return cleaned, dropped, clean_text_dropped, clamped
 
 
 def _count_missing_evidence(items: list) -> int:
@@ -182,8 +279,8 @@ async def persist_session_facts_activity(payload: dict) -> dict:
             .all()
         )
         utterance_lookup = {utt.id: utt.text for utt in utterances}
-        cleaned_quotes, dropped_quotes, clean_text_dropped = _clean_quotes(
-            utterance_lookup, facts
+        cleaned_quotes, dropped_quotes, clean_text_dropped, quotes_clamped = _clean_quotes(
+            utterance_lookup, utterances, facts
         )
 
         for model in (Mention, Scene, Event, Quote, Thread, ThreadUpdate):
@@ -221,6 +318,38 @@ async def persist_session_facts_activity(payload: dict) -> dict:
                 )
                 dropped_evidence += dropped
                 clamped_evidence += clamped
+
+        for scene in facts.scenes:
+            if not scene.evidence:
+                fallback = _fallback_span_by_time(
+                    utterances, scene.start_ms, scene.end_ms
+                )
+                if fallback:
+                    scene.evidence = [fallback]
+
+        for event in facts.events:
+            if not event.evidence:
+                fallback = _fallback_span_by_time(
+                    utterances, event.start_ms, event.end_ms
+                )
+                if fallback:
+                    event.evidence = [fallback]
+
+        for thread in facts.threads:
+            if not thread.evidence:
+                for update in thread.updates:
+                    if update.evidence:
+                        thread.evidence = update.evidence
+                        break
+            for update in thread.updates:
+                if update.evidence or not update.related_event_indexes:
+                    continue
+                for idx in update.related_event_indexes:
+                    if 0 <= idx < len(facts.events):
+                        event_evidence = facts.events[idx].evidence
+                        if event_evidence:
+                            update.evidence = event_evidence
+                            break
 
         mention_repairs = 0
         mentions_dropped = 0
@@ -343,6 +472,7 @@ async def persist_session_facts_activity(payload: dict) -> dict:
             "threads": len(facts.threads),
             "quotes": len(cleaned_quotes),
             "quotes_dropped": dropped_quotes,
+            "quotes_clamped": quotes_clamped,
             "evidence_dropped": dropped_evidence,
             "evidence_clamped": clamped_evidence,
             "mentions_repaired": mention_repairs,

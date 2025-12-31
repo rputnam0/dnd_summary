@@ -184,3 +184,70 @@ def summary_plan_schema() -> types.Schema:
             ),
         },
     )
+
+
+def quotes_schema() -> types.Schema:
+    return types.Schema(
+        type=types.Type.OBJECT,
+        required=["quotes"],
+        properties={
+            "quotes": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(
+                    type=types.Type.OBJECT,
+                    required=["utterance_id"],
+                    properties={
+                        "utterance_id": types.Schema(type=types.Type.STRING),
+                        "char_start": types.Schema(type=types.Type.INTEGER),
+                        "char_end": types.Schema(type=types.Type.INTEGER),
+                        "speaker": types.Schema(type=types.Type.STRING),
+                        "note": types.Schema(type=types.Type.STRING),
+                        "clean_text": types.Schema(type=types.Type.STRING),
+                    },
+                ),
+            )
+        },
+    )
+
+
+def events_schema() -> types.Schema:
+    evidence_schema = _evidence_schema()
+    return types.Schema(
+        type=types.Type.OBJECT,
+        required=["events"],
+        properties={
+            "events": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(
+                    type=types.Type.OBJECT,
+                    required=["event_type", "start_ms", "end_ms", "summary", "evidence"],
+                    properties={
+                        "event_type": types.Schema(
+                            type=types.Type.STRING,
+                            enum=[
+                                "combat",
+                                "social",
+                                "travel",
+                                "discovery",
+                                "loot",
+                                "economy",
+                                "relationship",
+                                "thread_update",
+                                "rules",
+                                "generic",
+                            ],
+                        ),
+                        "start_ms": types.Schema(type=types.Type.INTEGER),
+                        "end_ms": types.Schema(type=types.Type.INTEGER),
+                        "summary": types.Schema(type=types.Type.STRING),
+                        "entities": types.Schema(
+                            type=types.Type.ARRAY,
+                            items=types.Schema(type=types.Type.STRING),
+                        ),
+                        "evidence": types.Schema(type=types.Type.ARRAY, items=evidence_schema),
+                        "confidence": types.Schema(type=types.Type.NUMBER),
+                    },
+                ),
+            )
+        },
+    )

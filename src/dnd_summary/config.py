@@ -17,6 +17,9 @@ class Settings(BaseSettings):
 
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3-flash"
+    min_quotes: int = 6
+    max_quotes: int = 12
+    min_events: int = 8
 
 
 settings = Settings()

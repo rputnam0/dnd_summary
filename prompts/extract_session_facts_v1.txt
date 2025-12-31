@@ -67,6 +67,7 @@ Rules:
 - Use character names (in-world), not player names, when referring to PCs.
 - Prefer the character map below when naming PCs or speakers.
 - Use ONLY utterance_id values that appear in the transcript below.
+- utterance_id must be the bracketed ID, not the timestamp range.
 - char_start/char_end must be offsets into the referenced utterance text (0-based, within the utterance text only).
 - char_end must be > char_start and within the utterance text length (never 0,0).
 - Each evidence entry must include char_start/char_end and should point to the smallest substring that supports the claim.
@@ -74,10 +75,16 @@ Rules:
 - Quotes must isolate the in-character line only (exclude narration like "she goes", "he says", "they say").
 - If a quote needs light cleanup for readability, include a clean_text version while keeping char_start/char_end grounded in the utterance.
 - Do not skip interesting/funny quotes because of minor transcription noise; use clean_text instead.
+- Aim for 6-12 quotes per session; if the transcript is short, include at least 4 quotes.
+- Spread quotes across different scenes and speakers when possible.
+- If the DM is speaking as an NPC, set speaker to the NPC name (not "Dungeon Master").
 - Every mention/scene/event/thread/update MUST include at least one evidence span with char_start and char_end populated.
 - If you cannot find a perfect supporting span, use the best approximate span and lower confidence; do NOT leave evidence empty.
 - If you are unsure, lower confidence instead of inventing facts.
 - Prefer completeness over brevity; include NPCs, locations, items, factions, relationships, money, and combat outcomes.
+- Mentions should include every PC who appears in the transcript (use the character map), plus all named NPCs/locations/items/factions.
+- Aim for 10-25 mentions and 6-12 events for longer sessions, without splitting trivial beats.
+- Include events for quest offers, major reveals, travel transitions, purchases, combats, and crimes; if a thread update happens in-session, capture it as an event too.
 
 Validation checklist before output:
 - No evidence list is empty.

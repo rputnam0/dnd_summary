@@ -103,3 +103,11 @@ class SummaryBeat(BaseModel):
 
 class SummaryPlan(BaseModel):
     beats: list[SummaryBeat] = Field(default_factory=list)
+
+
+class QuoteExtraction(BaseModel):
+    quotes: list[QuoteCandidate] = Field(default_factory=list)
+
+
+class EventExtraction(BaseModel):
+    events: list[AtomicEvent] = Field(default_factory=list)
