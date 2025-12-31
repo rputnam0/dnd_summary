@@ -28,4 +28,35 @@ class ProcessSessionWorkflow:
             },
             start_to_close_timeout=timedelta(minutes=10),
         )
-        return {"status": "ok", "ingest": transcript, "extract": extraction}
+        plan = await workflow.execute_activity(
+            "plan_summary_activity",
+            {
+                "run_id": transcript["run_id"],
+                "session_id": transcript["session_id"],
+            },
+            start_to_close_timeout=timedelta(minutes=10),
+        )
+        summary = await workflow.execute_activity(
+            "write_summary_activity",
+            {
+                "run_id": transcript["run_id"],
+                "session_id": transcript["session_id"],
+            },
+            start_to_close_timeout=timedelta(minutes=10),
+        )
+        docx = await workflow.execute_activity(
+            "render_summary_docx_activity",
+            {
+                "run_id": transcript["run_id"],
+                "session_id": transcript["session_id"],
+            },
+            start_to_close_timeout=timedelta(minutes=2),
+        )
+        return {
+            "status": "ok",
+            "ingest": transcript,
+            "extract": extraction,
+            "plan": plan,
+            "summary": summary,
+            "docx": docx,
+        }

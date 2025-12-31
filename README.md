@@ -34,6 +34,7 @@ Use `uv` with `pyproject.toml` (no `requirements.txt`).
 Set your Gemini API key in the environment before running extraction:
 - `DND_GEMINI_API_KEY=...`
 - Optional: `DND_GEMINI_MODEL=gemini-3-flash`
+Artifacts are written to `artifacts/` by default (see `DND_ARTIFACTS_ROOT`).
 
 ## Canonical transcript inputs
 

@@ -1,0 +1,19 @@
+You are writing a narrative D&D session summary for human readers.
+
+Requirements:
+- Use the narrative style described in the plan.
+- Stay strictly grounded in the transcript and session facts.
+- If you include quotes, they MUST be copied verbatim from the Quote Bank below.
+- Write 600–1200 words unless the session is unusually short.
+
+Summary plan (JSON):
+{summary_plan}
+
+Session facts (JSON):
+{session_facts}
+
+Quote Bank (utterance_id -> exact text):
+{quote_bank}
+
+Transcript (each line includes the utterance_id, use only for grounding):
+{transcript}

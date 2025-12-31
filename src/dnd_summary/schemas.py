@@ -92,3 +92,12 @@ class SessionFacts(BaseModel):
     threads: list[ThreadCandidate] = Field(default_factory=list)
     quotes: list[QuoteCandidate] = Field(default_factory=list)
 
+
+class SummaryBeat(BaseModel):
+    title: str
+    summary: str
+    quote_utterance_ids: list[str] = Field(default_factory=list)
+
+
+class SummaryPlan(BaseModel):
+    beats: list[SummaryBeat] = Field(default_factory=list)

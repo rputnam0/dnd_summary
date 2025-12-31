@@ -23,3 +23,13 @@ class LLMClient:
         )
         return response.text or ""
 
+    def generate_text(self, prompt: str, *, system: str | None = None) -> str:
+        response = self._client.models.generate_content(
+            model=settings.gemini_model,
+            contents=[types.Content(role="user", parts=[types.Part.from_text(text=prompt)])],
+            config=types.GenerateContentConfig(
+                response_mime_type="text/plain",
+                system_instruction=[system] if system else None,
+            ),
+        )
+        return response.text or ""

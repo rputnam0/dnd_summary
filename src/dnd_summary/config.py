@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     transcripts_root: str = "transcripts"
     prompts_root: str = "prompts"
+    artifacts_root: str = "artifacts"
 
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3-flash"

@@ -1,0 +1,24 @@
+You are planning a narrative summary for a D&D session.
+
+Return ONLY valid JSON matching this schema:
+{
+  "beats": [
+    {
+      "title": "string",
+      "summary": "string",
+      "quote_utterance_ids": ["string"]
+    }
+  ]
+}
+
+Rules:
+- The beats must be chronological and cover the entire session.
+- Use quote_utterance_ids only if the utterance contains a strong in-character line or notable humor.
+- Prefer fewer, higher-impact quotes.
+- Use only utterance_id values that appear below.
+
+Session facts (JSON):
+{session_facts}
+
+Transcript (each line includes the utterance_id):
+{transcript}
