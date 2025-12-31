@@ -142,9 +142,16 @@ async def extract_session_facts_activity(payload: dict) -> dict:
         transcript_text = _format_transcript(utterances, character_map)
 
         prompt_template = _load_prompt("extract_session_facts_v1.txt")
+        speakers = sorted(
+            {
+                character_map.get(utt.participant.display_name, utt.participant.display_name)
+                for utt in utterances
+            }
+        )
         prompt = prompt_template.format(
             transcript=transcript_text,
             character_map=json.dumps(character_map, sort_keys=True),
+            speakers=json.dumps(speakers, sort_keys=True),
         )
 
         client = LLMClient()
@@ -159,7 +166,7 @@ async def extract_session_facts_activity(payload: dict) -> dict:
                     kind="extract_session_facts",
                     model=settings.gemini_model,
                     prompt_id="extract_session_facts_v1",
-                    prompt_version="1",
+                    prompt_version="5",
                     input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
                     output_hash=sha256(raw_json.encode("utf-8")).hexdigest(),
                     latency_ms=latency_ms,
@@ -176,7 +183,7 @@ async def extract_session_facts_activity(payload: dict) -> dict:
                     kind="extract_session_facts",
                     model=settings.gemini_model,
                     prompt_id="extract_session_facts_v1",
-                    prompt_version="1",
+                    prompt_version="5",
                     input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
                     output_hash=sha256(b"").hexdigest(),
                     latency_ms=latency_ms,
@@ -192,7 +199,7 @@ async def extract_session_facts_activity(payload: dict) -> dict:
         facts = SessionFacts.model_validate(payload_json)
         _ensure_pc_mentions(facts, utterances, character_map)
 
-        if len(facts.quotes) <= settings.min_quotes:
+        if len(facts.quotes) < settings.min_quotes * 2:
             quote_prompt_template = _load_prompt("extract_quotes_v1.txt")
             quote_prompt = quote_prompt_template.format(
                 transcript=transcript_text,
@@ -213,7 +220,7 @@ async def extract_session_facts_activity(payload: dict) -> dict:
                         kind="extract_quotes",
                         model=settings.gemini_model,
                         prompt_id="extract_quotes_v1",
-                        prompt_version="1",
+                        prompt_version="3",
                         input_hash=sha256(quote_prompt.encode("utf-8")).hexdigest(),
                         output_hash=sha256(quote_json.encode("utf-8")).hexdigest(),
                         latency_ms=latency_ms,
@@ -233,7 +240,7 @@ async def extract_session_facts_activity(payload: dict) -> dict:
                         kind="extract_quotes",
                         model=settings.gemini_model,
                         prompt_id="extract_quotes_v1",
-                        prompt_version="1",
+                        prompt_version="3",
                         input_hash=sha256(quote_prompt.encode("utf-8")).hexdigest(),
                         output_hash=sha256(b"").hexdigest(),
                         latency_ms=latency_ms,

@@ -73,6 +73,7 @@ Rules:
 - Each evidence entry must include char_start/char_end and should point to the smallest substring that supports the claim.
 - Use related_event_indexes to point to the relevant item(s) in the events list (0-based).
 - Quotes must isolate the in-character line only (exclude narration like "she goes", "he says", "they say").
+- Do NOT quote DM recap or narration; only include spoken dialogue lines. If DM speaks as an NPC, set speaker to the NPC.
 - If a quote needs light cleanup for readability, include a clean_text version while keeping char_start/char_end grounded in the utterance.
 - Do not skip interesting/funny quotes because of minor transcription noise; use clean_text instead.
 - Aim for 6-12 quotes per session; if the transcript is short, include at least 4 quotes.
@@ -82,9 +83,16 @@ Rules:
 - If you cannot find a perfect supporting span, use the best approximate span and lower confidence; do NOT leave evidence empty.
 - If you are unsure, lower confidence instead of inventing facts.
 - Prefer completeness over brevity; include NPCs, locations, items, factions, relationships, money, and combat outcomes.
-- Mentions should include every PC who appears in the transcript (use the character map), plus all named NPCs/locations/items/factions.
+- Mentions should include every PC who appears in the transcript (use the character map; if missing, use speaker names), plus all named NPCs/locations/items/factions.
+- Include every unique speaker name as a character mention unless it is clearly an out-of-world label (e.g., Dungeon Master narration).
+- Use the Speakers list below as a checklist; ensure each in-world speaker becomes a character mention.
+- If the transcript uses both a short name and a full name for the same character, prefer the fuller name and use it consistently.
+- Include party names and named organizations/shops when they are referenced.
+- Ensure any named entities referenced in events or thread updates also appear in mentions.
+- Include off-screen entities referenced as goals or backstory (e.g., patrons, dealers, quest targets) if they are named.
 - Aim for 10-25 mentions and 6-12 events for longer sessions, without splitting trivial beats.
 - Include events for quest offers, major reveals, travel transitions, purchases, combats, and crimes; if a thread update happens in-session, capture it as an event too.
+- Threads should capture ongoing quests/mysteries/personal arcs even if only discussed; use proposed or active when appropriate.
 
 Validation checklist before output:
 - No evidence list is empty.
@@ -92,6 +100,9 @@ Validation checklist before output:
 
 Character Map (participant -> character, JSON):
 {character_map}
+
+Speakers (unique from transcript):
+{speakers}
 
 Transcript (each line includes the utterance_id):
 {transcript}

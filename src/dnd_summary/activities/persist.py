@@ -152,11 +152,13 @@ def _clean_quotes(
     utterance_lookup: dict[str, str],
     utterances: list[Utterance],
     facts: SessionFacts,
-) -> tuple[list, int, int, int]:
+) -> tuple[list, int, int, int, int]:
     cleaned = []
     dropped = 0
     clean_text_dropped = 0
     clamped = 0
+    deduped = 0
+    seen: dict[str, set[str]] = {}
     for quote in facts.quotes:
         utterance_text = utterance_lookup.get(quote.utterance_id)
         if utterance_text is None and quote.utterance_id:
@@ -217,8 +219,16 @@ def _clean_quotes(
             if _clean_text_similarity(raw_span, quote.clean_text) < 0.6:
                 quote.clean_text = None
                 clean_text_dropped += 1
+        quote_text = quote.clean_text or utterance_text[quote.char_start : quote.char_end]
+        normalized = _normalize_text(quote_text)
+        if normalized:
+            existing = seen.setdefault(quote.utterance_id, set())
+            if normalized in existing:
+                deduped += 1
+                continue
+            existing.add(normalized)
         cleaned.append(quote)
-    return cleaned, dropped, clean_text_dropped, clamped
+    return cleaned, dropped, clean_text_dropped, clamped, deduped
 
 
 def _count_missing_evidence(items: list) -> int:
@@ -279,7 +289,13 @@ async def persist_session_facts_activity(payload: dict) -> dict:
             .all()
         )
         utterance_lookup = {utt.id: utt.text for utt in utterances}
-        cleaned_quotes, dropped_quotes, clean_text_dropped, quotes_clamped = _clean_quotes(
+        (
+            cleaned_quotes,
+            dropped_quotes,
+            clean_text_dropped,
+            quotes_clamped,
+            quotes_deduped,
+        ) = _clean_quotes(
             utterance_lookup, utterances, facts
         )
 
@@ -472,6 +488,7 @@ async def persist_session_facts_activity(payload: dict) -> dict:
             "threads": len(facts.threads),
             "quotes": len(cleaned_quotes),
             "quotes_dropped": dropped_quotes,
+            "quotes_deduped": quotes_deduped,
             "quotes_clamped": quotes_clamped,
             "evidence_dropped": dropped_evidence,
             "evidence_clamped": clamped_evidence,

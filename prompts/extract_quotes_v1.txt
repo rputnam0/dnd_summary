@@ -22,9 +22,11 @@ Rules:
 - char_start/char_end must be offsets into the referenced utterance text (0-based, within the utterance text only).
 - char_end must be > char_start and within the utterance text length (never 0,0).
 - Quotes must isolate the in-character line only (exclude narration like "she goes", "he says", "they say").
+- Do NOT select DM recap or narration. Only include spoken dialogue lines.
 - If a quote needs light cleanup for readability, include a clean_text version while keeping char_start/char_end grounded in the utterance.
 - Do not skip interesting/funny quotes because of minor transcription noise; use clean_text instead.
 - Aim for {min_quotes}-{max_quotes} quotes; only return fewer if the transcript truly lacks enough dialogue.
+- If you cannot reach the minimum with major beats, include short character reactions or quips, but still avoid DM narration.
 - Spread quotes across different scenes and speakers when possible.
 - If the DM is speaking as an NPC, set speaker to the NPC name (not "Dungeon Master").
 

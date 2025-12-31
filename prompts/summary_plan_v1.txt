@@ -18,7 +18,7 @@ Rules:
 - Use character names for PCs (never player names); see the character map below.
 - Use only utterance_id values that appear below.
 - Only choose utterance IDs that appear in the Quote Bank.
-- Avoid out-of-character table talk or narrator framing in quotes.
+- Avoid out-of-character table talk or narrator framing in quotes; do not select DM recap lines.
 
 Session facts (JSON):
 {session_facts}

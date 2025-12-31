@@ -8,17 +8,16 @@
 - DSPy eval harness in place with legacy analysis docs used to bootstrap a rough gold set; supports NPC/location/item/faction tasks.
 
 ## Next commit plan (near-term)
-1) Extraction quality pass vs legacy analysis docs  
-   - Compare extracted NPCs/locations/threads/events to `legacy/` analysis docs.  
-   - Adjust `prompts/extract_session_facts_v1.txt` to close gaps.
+1) Re-run session_50 end-to-end once Gemini quota resets  
+   - Validate mentions include locations/items referenced in events/threads.  
+   - Confirm quote coverage stays >= min_quotes after cleaning/dedup.
 
-2) Quote coverage tuning  
-   - Increase clean_text coverage, keep in-character lines only.  
-   - Add a prompt reminder to avoid DM framing ("she says") inside quotes.
-
-3) Optional evidence repair step  
+2) Optional evidence repair step  
    - If evidence gaps persist, add a targeted LLM repair activity for missing spans.  
    - Gate by feature flag to keep costs low.
+
+3) Add LLM retry/backoff policy (429 + transient errors)  
+   - Keep provenance for failed attempts; return a clear error to the workflow.
 
 ## Recently completed
 - Entity-centric API endpoints (`/entities/{entity_id}/mentions|quotes|events`)
@@ -28,6 +27,9 @@
 - Thread update evidence includes related event IDs
 - Evidence clamping + mention repair/drop for invalid spans
 - UI quest journal + campaign codex panels (campaign-wide threads/entities)
+- Speakers list added to extraction prompt; mentions checklist tightened
+- Quote merge threshold adjusted + prompt updates to avoid DM narration
+- Quote dedupe in persist step + quote fallback threshold raised
 
 ## Mid-term
 - Add correction loop (rename/merge entities, mark false positives, lock canonical names).  
