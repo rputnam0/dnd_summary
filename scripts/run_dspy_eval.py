@@ -16,6 +16,21 @@ class ExtractNPCs(dspy.Signature):
     npcs = dspy.OutputField(desc="JSON array of NPC names mentioned.")
 
 
+class ExtractLocations(dspy.Signature):
+    transcript = dspy.InputField(desc="Full transcript text with speaker labels.")
+    locations = dspy.OutputField(desc="JSON array of location names mentioned.")
+
+
+class ExtractItems(dspy.Signature):
+    transcript = dspy.InputField(desc="Full transcript text with speaker labels.")
+    items = dspy.OutputField(desc="JSON array of item names mentioned.")
+
+
+class ExtractFactions(dspy.Signature):
+    transcript = dspy.InputField(desc="Full transcript text with speaker labels.")
+    factions = dspy.OutputField(desc="JSON array of faction or organization names mentioned.")
+
+
 def _normalize(name: str) -> str:
     name = re.sub(r"\([^)]*\)", "", name)
     name = re.sub(r"[^a-zA-Z0-9\\s]+", " ", name)
@@ -71,6 +86,12 @@ def main() -> None:
     parser.add_argument("--dataset", required=True, help="Path to JSONL eval set.")
     parser.add_argument("--output-dir", default="artifacts/evals", help="Output directory.")
     parser.add_argument("--model", default=settings.gemini_model, help="Model name.")
+    parser.add_argument(
+        "--task",
+        default="npc",
+        choices=["npc", "location", "item", "faction"],
+        help="Which entity type to evaluate.",
+    )
     parser.add_argument("--limit", type=int, default=0, help="Limit number of rows.")
     args = parser.parse_args()
 
@@ -86,7 +107,14 @@ def main() -> None:
         model = f"gemini/{model}"
     lm = dspy.LM(model=model, api_key=settings.gemini_api_key)
     dspy.settings.configure(lm=lm)
-    predictor = dspy.Predict(ExtractNPCs)
+    signature_map = {
+        "npc": (ExtractNPCs, "npcs", "gold_npcs"),
+        "location": (ExtractLocations, "locations", "gold_locations"),
+        "item": (ExtractItems, "items", "gold_items"),
+        "faction": (ExtractFactions, "factions", "gold_factions"),
+    }
+    signature, output_key, gold_key = signature_map[args.task]
+    predictor = dspy.Predict(signature)
 
     run_id = uuid.uuid4().hex
     output_dir = Path(args.output_dir) / run_id
@@ -96,19 +124,20 @@ def main() -> None:
     for row in rows:
         transcript_path = Path(row["transcript_path"])
         transcript_text = _read_transcript(transcript_path)
-        gold = row.get("gold_npcs", [])
+        gold = row.get(gold_key, [])
 
         prediction = predictor(transcript=transcript_text)
         try:
-            predicted = json.loads(prediction.npcs)
+            predicted = json.loads(getattr(prediction, output_key))
         except json.JSONDecodeError:
             predicted = []
         scores = _score(predicted, gold)
         results.append(
             {
                 "transcript_path": str(transcript_path),
-                "gold_npcs": gold,
-                "predicted_npcs": predicted,
+                "task": args.task,
+                "gold": gold,
+                "predicted": predicted,
                 "scores": scores,
             }
         )
@@ -116,6 +145,7 @@ def main() -> None:
     summary = {
         "run_id": run_id,
         "model": args.model,
+        "task": args.task,
         "dataset": str(dataset_path),
         "count": len(results),
         "avg_precision": sum(r["scores"]["precision"] for r in results) / len(results),

@@ -7,7 +7,10 @@ Each line contains:
 ```
 {
   "transcript_path": "transcripts/campaigns/<campaign_slug>/sessions/<session_slug>/transcript.txt",
-  "gold_npcs": ["Baba Yaga", "Captain Levi"]
+  "gold_npcs": ["Baba Yaga", "Captain Levi"],
+  "gold_locations": ["Moonhaven", "Phylantra"],
+  "gold_items": ["Bone Key", "Lantern of the Dark Flame"],
+  "gold_factions": ["Stonewall Legionnaire"]
 }
 ```
 
@@ -24,7 +27,7 @@ Install eval deps:
 
 Run:
 ```
-uv run python scripts/run_dspy_eval.py --dataset evals/npc_eval_template.jsonl --limit 3
+uv run python scripts/run_dspy_eval.py --dataset evals/npc_eval_template.jsonl --task npc --limit 3
 ```
 
 Results land under `artifacts/evals/<run_id>/`.

@@ -329,6 +329,84 @@ def list_threads(session_id: str) -> list[dict]:
         ]
 
 
+def _utterance_ids_from_evidence(entries: list[dict] | None) -> set[str]:
+    ids: set[str] = set()
+    if not entries:
+        return ids
+    for entry in entries:
+        utt_id = entry.get("utterance_id")
+        if utt_id:
+            ids.add(utt_id)
+    return ids
+
+
+@app.get("/threads/{thread_id}/mentions")
+def list_thread_mentions(thread_id: str) -> list[dict]:
+    with get_session() as session:
+        thread = session.query(Thread).filter_by(id=thread_id).first()
+        if not thread:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        updates = session.query(ThreadUpdate).filter_by(thread_id=thread_id).all()
+
+        utterance_ids = set()
+        utterance_ids |= _utterance_ids_from_evidence(thread.evidence)
+        for update in updates:
+            utterance_ids |= _utterance_ids_from_evidence(update.evidence)
+
+        mentions = session.query(Mention).filter_by(session_id=thread.session_id).all()
+        results = []
+        for mention in mentions:
+            evidence = mention.evidence or []
+            if not any(ev.get("utterance_id") in utterance_ids for ev in evidence):
+                continue
+            results.append(
+                {
+                    "id": mention.id,
+                    "text": mention.text,
+                    "entity_type": mention.entity_type,
+                    "description": mention.description,
+                    "evidence": mention.evidence,
+                    "confidence": mention.confidence,
+                }
+            )
+        return results
+
+
+@app.get("/threads/{thread_id}/quotes")
+def list_thread_quotes(thread_id: str) -> list[dict]:
+    with get_session() as session:
+        thread = session.query(Thread).filter_by(id=thread_id).first()
+        if not thread:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        updates = session.query(ThreadUpdate).filter_by(thread_id=thread_id).all()
+
+        utterance_ids = set()
+        utterance_ids |= _utterance_ids_from_evidence(thread.evidence)
+        for update in updates:
+            utterance_ids |= _utterance_ids_from_evidence(update.evidence)
+
+        if not utterance_ids:
+            return []
+
+        quotes = (
+            session.query(Quote)
+            .filter(Quote.session_id == thread.session_id)
+            .filter(Quote.utterance_id.in_(sorted(utterance_ids)))
+            .all()
+        )
+        return [
+            {
+                "id": q.id,
+                "utterance_id": q.utterance_id,
+                "char_start": q.char_start,
+                "char_end": q.char_end,
+                "speaker": q.speaker,
+                "note": q.note,
+            }
+            for q in quotes
+        ]
+
+
 @app.get("/sessions/{session_id}/artifacts")
 def list_artifacts(session_id: str) -> list[dict]:
     with get_session() as session:
