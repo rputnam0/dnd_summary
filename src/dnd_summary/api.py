@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 
 from dnd_summary.db import get_session
-from dnd_summary.models import Artifact, Campaign, Entity, Quote, Session
+from dnd_summary.models import Artifact, Campaign, Entity, Quote, Session, SessionExtraction
 
 
 app = FastAPI(title="DND Summary API", version="0.0.0")
@@ -98,3 +98,17 @@ def list_artifacts(session_id: str) -> list[dict]:
             }
             for a in artifacts
         ]
+
+
+@app.get("/sessions/{session_id}/summary")
+def get_summary(session_id: str) -> dict:
+    with get_session() as session:
+        summary = (
+            session.query(SessionExtraction)
+            .filter_by(session_id=session_id, kind="summary_text")
+            .order_by(SessionExtraction.created_at.desc())
+            .first()
+        )
+        if not summary:
+            raise HTTPException(status_code=404, detail="Summary not found")
+        return {"text": summary.payload.get("text", "")}
