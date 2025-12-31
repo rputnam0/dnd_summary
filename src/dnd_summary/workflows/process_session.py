@@ -28,6 +28,14 @@ class ProcessSessionWorkflow:
             },
             start_to_close_timeout=timedelta(minutes=10),
         )
+        persisted = await workflow.execute_activity(
+            "persist_session_facts_activity",
+            {
+                "run_id": transcript["run_id"],
+                "session_id": transcript["session_id"],
+            },
+            start_to_close_timeout=timedelta(minutes=2),
+        )
         plan = await workflow.execute_activity(
             "plan_summary_activity",
             {
@@ -56,6 +64,7 @@ class ProcessSessionWorkflow:
             "status": "ok",
             "ingest": transcript,
             "extract": extraction,
+            "persist": persisted,
             "plan": plan,
             "summary": summary,
             "docx": docx,
