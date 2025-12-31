@@ -226,6 +226,7 @@ class ThreadUpdate(Base):
     update_type: Mapped[str] = mapped_column(String, nullable=False)
     note: Mapped[str] = mapped_column(Text, nullable=False)
     evidence: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    related_event_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

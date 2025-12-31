@@ -73,6 +73,7 @@ class ThreadUpdate(BaseModel):
     update_type: str
     note: str
     evidence: list[EvidenceSpan] = Field(default_factory=list)
+    related_event_indexes: list[int] = Field(default_factory=list)
 
 
 class ThreadCandidate(BaseModel):

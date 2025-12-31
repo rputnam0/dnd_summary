@@ -165,6 +165,7 @@ async def persist_session_facts_activity(payload: dict) -> dict:
 
         thread_rows = []
         thread_updates = []
+        event_index_to_id = {idx: event.id for idx, event in enumerate(events)}
         for thread in facts.threads:
             thread_row = Thread(
                 run_id=run_id,
@@ -181,6 +182,11 @@ async def persist_session_facts_activity(payload: dict) -> dict:
             thread_rows.append(thread_row)
 
             for update in thread.updates:
+                related_ids = []
+                for idx in update.related_event_indexes:
+                    event_id = event_index_to_id.get(idx)
+                    if event_id:
+                        related_ids.append(event_id)
                 thread_updates.append(
                     ThreadUpdate(
                         run_id=run_id,
@@ -189,6 +195,7 @@ async def persist_session_facts_activity(payload: dict) -> dict:
                         update_type=update.update_type,
                         note=update.note,
                         evidence=[e.model_dump(mode="json") for e in update.evidence],
+                        related_event_ids=related_ids,
                     )
                 )
 

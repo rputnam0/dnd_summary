@@ -507,6 +507,7 @@ def list_threads(
                     "update_type": update.update_type,
                     "note": update.note,
                     "evidence": update.evidence,
+                    "related_event_ids": update.related_event_ids,
                     "created_at": update.created_at.isoformat(),
                 }
             )
@@ -625,9 +626,11 @@ def list_thread_mentions(thread_id: str) -> list[dict]:
 
         utterance_ids = set()
         utterance_ids |= _utterance_ids_from_evidence(thread.evidence)
+        related_event_ids: list[str] = []
         for update in updates:
             utterance_ids |= _utterance_ids_from_evidence(update.evidence)
-        utterance_ids |= _thread_event_utterance_ids(session, thread)
+            related_event_ids.extend(update.related_event_ids or [])
+        utterance_ids |= _thread_event_utterance_ids(session, thread, related_event_ids)
 
         mentions = (
             session.query(Mention)
@@ -681,9 +684,11 @@ def list_thread_quotes(thread_id: str) -> list[dict]:
 
         utterance_ids = set()
         utterance_ids |= _utterance_ids_from_evidence(thread.evidence)
+        related_event_ids: list[str] = []
         for update in updates:
             utterance_ids |= _utterance_ids_from_evidence(update.evidence)
-        utterance_ids |= _thread_event_utterance_ids(session, thread)
+            related_event_ids.extend(update.related_event_ids or [])
+        utterance_ids |= _thread_event_utterance_ids(session, thread, related_event_ids)
 
         if not utterance_ids:
             tokens = _thread_title_tokens(thread.title)
@@ -789,14 +794,24 @@ def get_summary(
         return {"text": summary.payload.get("text", "")}
 
 
-def _thread_event_utterance_ids(session, thread: Thread) -> set[str]:
+def _thread_event_utterance_ids(
+    session,
+    thread: Thread,
+    related_event_ids: list[str] | None = None,
+) -> set[str]:
     ids: set[str] = set()
+    if related_event_ids:
+        events = session.query(Event).filter(Event.id.in_(related_event_ids)).all()
+        for event in events:
+            ids |= _utterance_ids_from_evidence(event.evidence)
+        if ids:
+            return ids
+
     events = (
         session.query(Event)
         .filter_by(session_id=thread.session_id, run_id=thread.run_id)
         .all()
     )
-    title = (thread.title or "").lower()
     tokens = _thread_title_tokens(thread.title)
     for event in events:
         summary = (event.summary or "").lower()

@@ -43,6 +43,7 @@ Return ONLY valid JSON matching this schema:
         {{
           "update_type": "string",
           "note": "string",
+          "related_event_indexes": [0],
           "evidence": [{{"utterance_id": "string", "char_start": 0, "char_end": 1, "kind": "support", "confidence": 0.0}}]
         }}
       ],
@@ -66,6 +67,7 @@ Rules:
 - Prefer the character map below when naming PCs or speakers.
 - Use ONLY utterance_id values that appear in the transcript below.
 - char_start/char_end must be offsets into the referenced utterance text.
+- Use related_event_indexes to point to the relevant item(s) in the events list (0-based).
 - If you are unsure, lower confidence instead of inventing facts.
 - Prefer completeness over brevity; include NPCs, locations, items, factions, relationships, money, and combat outcomes.
 

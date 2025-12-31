@@ -124,10 +124,14 @@ def session_facts_schema() -> types.Schema:
                             type=types.Type.ARRAY,
                             items=types.Schema(
                                 type=types.Type.OBJECT,
-                                required=["update_type", "note", "evidence"],
+                                required=["update_type", "note", "evidence", "related_event_indexes"],
                                 properties={
                                     "update_type": types.Schema(type=types.Type.STRING),
                                     "note": types.Schema(type=types.Type.STRING),
+                                    "related_event_indexes": types.Schema(
+                                        type=types.Type.ARRAY,
+                                        items=types.Schema(type=types.Type.INTEGER),
+                                    ),
                                     "evidence": types.Schema(
                                         type=types.Type.ARRAY, items=evidence_schema
                                     ),
