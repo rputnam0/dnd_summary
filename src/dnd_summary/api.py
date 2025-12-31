@@ -3,7 +3,18 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 
 from dnd_summary.db import get_session
-from dnd_summary.models import Artifact, Campaign, Entity, Quote, Session, SessionExtraction
+from dnd_summary.models import (
+    Artifact,
+    Campaign,
+    Entity,
+    Event,
+    Quote,
+    Scene,
+    Session,
+    SessionExtraction,
+    Thread,
+    ThreadUpdate,
+)
 
 
 app = FastAPI(title="DND Summary API", version="0.0.0")
@@ -82,6 +93,96 @@ def list_quotes(session_id: str) -> list[dict]:
                 "note": q.note,
             }
             for q in quotes
+        ]
+
+
+@app.get("/sessions/{session_id}/scenes")
+def list_scenes(session_id: str) -> list[dict]:
+    with get_session() as session:
+        scenes = (
+            session.query(Scene)
+            .filter_by(session_id=session_id)
+            .order_by(Scene.start_ms.asc(), Scene.id.asc())
+            .all()
+        )
+        return [
+            {
+                "id": s.id,
+                "title": s.title,
+                "summary": s.summary,
+                "location": s.location,
+                "start_ms": s.start_ms,
+                "end_ms": s.end_ms,
+                "participants": s.participants,
+                "evidence": s.evidence,
+            }
+            for s in scenes
+        ]
+
+
+@app.get("/sessions/{session_id}/events")
+def list_events(session_id: str) -> list[dict]:
+    with get_session() as session:
+        events = (
+            session.query(Event)
+            .filter_by(session_id=session_id)
+            .order_by(Event.start_ms.asc(), Event.id.asc())
+            .all()
+        )
+        return [
+            {
+                "id": e.id,
+                "event_type": e.event_type,
+                "summary": e.summary,
+                "start_ms": e.start_ms,
+                "end_ms": e.end_ms,
+                "entities": e.entities,
+                "evidence": e.evidence,
+                "confidence": e.confidence,
+            }
+            for e in events
+        ]
+
+
+@app.get("/sessions/{session_id}/threads")
+def list_threads(session_id: str) -> list[dict]:
+    with get_session() as session:
+        threads = (
+            session.query(Thread)
+            .filter_by(session_id=session_id)
+            .order_by(Thread.created_at.asc(), Thread.id.asc())
+            .all()
+        )
+        thread_updates = (
+            session.query(ThreadUpdate)
+            .filter_by(session_id=session_id)
+            .order_by(ThreadUpdate.created_at.asc(), ThreadUpdate.id.asc())
+            .all()
+        )
+        updates_by_thread: dict[str, list[dict]] = {}
+        for update in thread_updates:
+            updates_by_thread.setdefault(update.thread_id, []).append(
+                {
+                    "id": update.id,
+                    "update_type": update.update_type,
+                    "note": update.note,
+                    "evidence": update.evidence,
+                    "created_at": update.created_at.isoformat(),
+                }
+            )
+        return [
+            {
+                "id": t.id,
+                "title": t.title,
+                "kind": t.kind,
+                "status": t.status,
+                "summary": t.summary,
+                "evidence": t.evidence,
+                "confidence": t.confidence,
+                "created_at": t.created_at.isoformat(),
+                "updates": updates_by_thread.get(t.id, []),
+            }
+            for t in threads
         ]
 
 
