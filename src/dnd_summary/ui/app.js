@@ -9,6 +9,7 @@ const state = {
   selectedRun: null,
   bundle: null,
   questThreads: [],
+  campaignEntities: [],
 };
 
 const elements = {
@@ -30,6 +31,9 @@ const elements = {
   timelineList: document.getElementById("timelineList"),
   questList: document.getElementById("questList"),
   questFilter: document.getElementById("questFilter"),
+  codexList: document.getElementById("codexList"),
+  codexFilter: document.getElementById("codexFilter"),
+  codexSearch: document.getElementById("codexSearch"),
   searchInput: document.getElementById("searchInput"),
   searchButton: document.getElementById("searchButton"),
   semanticToggle: document.getElementById("semanticToggle"),
@@ -365,6 +369,51 @@ function renderQuestJournal(threads) {
   });
 }
 
+function renderCodex(entities) {
+  clearNode(elements.codexList);
+  if (!entities || entities.length === 0) {
+    elements.codexList.textContent = "No campaign entities found.";
+    return;
+  }
+  const filter = elements.codexFilter.value;
+  const query = elements.codexSearch.value.trim().toLowerCase();
+  const filtered = entities.filter((entity) => {
+    if (filter !== "all" && entity.type !== filter) {
+      return false;
+    }
+    if (query) {
+      const hay = `${entity.name} ${entity.description || ""}`.toLowerCase();
+      return hay.includes(query);
+    }
+    return true;
+  });
+  if (filtered.length === 0) {
+    elements.codexList.textContent = "No codex entries match the filter.";
+    return;
+  }
+  filtered.forEach((entity) => {
+    const card = document.createElement("div");
+    card.className = "entity-card";
+    const title = document.createElement("h3");
+    title.textContent = entity.name;
+    card.appendChild(title);
+    const type = document.createElement("p");
+    type.textContent = entity.type;
+    card.appendChild(type);
+    if (entity.description) {
+      const desc = document.createElement("p");
+      desc.textContent = entity.description;
+      card.appendChild(desc);
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Open dossier";
+    button.addEventListener("click", () => openEntity(entity));
+    card.appendChild(button);
+    elements.codexList.appendChild(card);
+  });
+}
+
 function renderTimeline(scenes, events) {
   clearNode(elements.timelineList);
   if ((!scenes || scenes.length === 0) && (!events || events.length === 0)) {
@@ -515,6 +564,7 @@ async function loadSessions() {
   clearNode(elements.runSelect);
   elements.sessionOnlyToggle.disabled = true;
   await loadQuestJournal();
+  await loadCodex();
   setStatus("Select a session to begin.");
 }
 
@@ -529,6 +579,19 @@ async function loadQuestJournal() {
   } catch (err) {
     clearNode(elements.questList);
     elements.questList.textContent = "Failed to load quest journal.";
+    console.error(err);
+  }
+}
+
+async function loadCodex() {
+  if (!state.selectedCampaign) return;
+  try {
+    const entities = await fetchJson(`/campaigns/${state.selectedCampaign}/entities`);
+    state.campaignEntities = entities;
+    renderCodex(entities);
+  } catch (err) {
+    clearNode(elements.codexList);
+    elements.codexList.textContent = "Failed to load campaign codex.";
     console.error(err);
   }
 }
@@ -656,17 +719,25 @@ async function loadBundle(sessionId, runId) {
 
 async function openEntity(entity) {
   if (!entity || !entity.id) return;
-  if (!state.selectedSession) return;
   elements.entityTitle.textContent = entity.name;
   elements.entityMeta.textContent = entity.type || "entity";
   clearNode(elements.entityDetails);
   elements.entityPanel.classList.remove("hidden");
+  const params = new URLSearchParams();
+  if (state.selectedSession) {
+    params.set("session_id", state.selectedSession);
+  }
+  if (state.selectedRun) {
+    params.set("run_id", state.selectedRun);
+  }
+  const query = params.toString();
+  const suffix = query ? `?${query}` : "";
   try {
     const [detail, mentions, events, quotes] = await Promise.all([
       fetchJson(`/entities/${entity.id}`),
-      fetchJson(`/entities/${entity.id}/mentions?session_id=${state.selectedSession}`),
-      fetchJson(`/entities/${entity.id}/events?session_id=${state.selectedSession}`),
-      fetchJson(`/entities/${entity.id}/quotes?session_id=${state.selectedSession}`),
+      fetchJson(`/entities/${entity.id}/mentions${suffix}`),
+      fetchJson(`/entities/${entity.id}/events${suffix}`),
+      fetchJson(`/entities/${entity.id}/quotes${suffix}`),
     ]);
     const aliasText =
       detail.aliases && detail.aliases.length > 0 ? detail.aliases.join(", ") : "None";
@@ -679,14 +750,14 @@ async function openEntity(entity) {
     if (mentions.length > 0) {
       blocks.push(
         buildSearchBlock("Mentions", mentions.slice(0, 10), (m) =>
-          renderSearchItem(m.text || "mention", null)
+          renderSearchItem(m.text || "mention", sessionLabel(m.session_id) || null)
         )
       );
     }
     if (events.length > 0) {
       blocks.push(
         buildSearchBlock("Events", events.slice(0, 10), (e) =>
-          renderSearchItem(e.summary, null)
+          renderSearchItem(e.summary, sessionLabel(e.session_id) || null)
         )
       );
     }
@@ -695,7 +766,7 @@ async function openEntity(entity) {
         buildSearchBlock("Quotes", quotes.slice(0, 10), (q) =>
           renderSearchItem(
             q.display_text || q.clean_text || "",
-            q.speaker || ""
+            [q.speaker, sessionLabel(q.session_id)].filter(Boolean).join(" • ")
           )
         )
       );
@@ -911,6 +982,12 @@ async function init() {
     if (state.bundle) {
       renderEntities(state.bundle.entities || []);
     }
+  });
+  elements.codexFilter.addEventListener("change", () => {
+    renderCodex(state.campaignEntities || []);
+  });
+  elements.codexSearch.addEventListener("input", () => {
+    renderCodex(state.campaignEntities || []);
   });
   elements.questFilter.addEventListener("change", async () => {
     await loadQuestJournal();

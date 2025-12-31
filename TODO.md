@@ -27,6 +27,7 @@
 - Quality report extraction + inspect_run output (evidence coverage, LLM call stats)
 - Thread update evidence includes related event IDs
 - Evidence clamping + mention repair/drop for invalid spans
+- UI quest journal + campaign codex panels (campaign-wide threads/entities)
 
 ## Mid-term
 - Add correction loop (rename/merge entities, mark false positives, lock canonical names).  

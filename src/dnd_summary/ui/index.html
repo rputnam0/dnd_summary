@@ -92,6 +92,29 @@
             <div id="questList" class="thread-grid"></div>
           </section>
 
+          <section id="codexSection" class="panel">
+            <div class="panel-header">
+              <h2>Campaign Codex</h2>
+              <span class="badge">All Entities</span>
+            </div>
+            <div class="entity-controls">
+              <label for="codexSearch">Search</label>
+              <input id="codexSearch" type="search" placeholder="Search the codex..." />
+              <label for="codexFilter">Type</label>
+              <select id="codexFilter">
+                <option value="all">All</option>
+                <option value="character">Characters</option>
+                <option value="location">Locations</option>
+                <option value="item">Items</option>
+                <option value="faction">Factions</option>
+                <option value="monster">Monsters</option>
+                <option value="organization">Organizations</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div id="codexList" class="entity-grid"></div>
+          </section>
+
           <section id="timelineSection" class="panel">
             <div class="panel-header">
               <h2>Chronicle Timeline</h2>
