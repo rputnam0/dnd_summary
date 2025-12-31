@@ -165,6 +165,90 @@ def list_entities(campaign_slug: str) -> None:
             typer.echo(f"{entity.entity_type}\t{entity.canonical_name}")
 
 
+def _resolve_latest_run(session, session_id: str, run_id: str | None) -> Run:
+    from dnd_summary.models import Run
+
+    if run_id:
+        run = session.query(Run).filter_by(id=run_id, session_id=session_id).first()
+        if not run:
+            raise SystemExit("Run not found for session.")
+        return run
+    runs = (
+        session.query(Run)
+        .filter_by(session_id=session_id)
+        .order_by(Run.created_at.desc())
+        .all()
+    )
+    if not runs:
+        raise SystemExit("No runs found for session.")
+    for run in runs:
+        if run.status == "completed":
+            return run
+    return runs[0]
+
+
+@app.command()
+def inspect_usage(campaign_slug: str, session_slug: str, run_id: str | None = None) -> None:
+    """Summarize LLM token usage for a session/run."""
+    from dnd_summary.db import get_session
+    from dnd_summary.models import Campaign, Session, SessionExtraction
+
+    with get_session() as session:
+        session_obj = (
+            session.query(Session)
+            .join(Campaign, Session.campaign_id == Campaign.id)
+            .filter(Campaign.slug == campaign_slug, Session.slug == session_slug)
+            .first()
+        )
+        if not session_obj:
+            raise SystemExit("Session not found.")
+        run = _resolve_latest_run(session, session_obj.id, run_id)
+        records = (
+            session.query(SessionExtraction)
+            .filter_by(run_id=run.id, session_id=session_obj.id, kind="llm_usage")
+            .order_by(SessionExtraction.created_at.asc(), SessionExtraction.id.asc())
+            .all()
+        )
+        if not records:
+            typer.echo("No usage records found for this run.")
+            return
+
+        totals = {"prompt": 0, "cached": 0, "candidates": 0, "total": 0}
+        per_kind: dict[str, dict[str, int]] = {}
+        for record in records:
+            payload = record.payload or {}
+            kind = payload.get("call_kind", "unknown")
+            bucket = per_kind.setdefault(
+                kind, {"prompt": 0, "cached": 0, "candidates": 0, "total": 0}
+            )
+            for key, field in [
+                ("prompt", "prompt_token_count"),
+                ("cached", "cached_content_token_count"),
+                ("candidates", "candidates_token_count"),
+                ("total", "total_token_count"),
+            ]:
+                value = payload.get(field) or 0
+                totals[key] += value
+                bucket[key] += value
+
+        cache_rate = 0.0
+        if totals["prompt"]:
+            cache_rate = totals["cached"] / totals["prompt"]
+
+        typer.echo(f"run_id={run.id}")
+        typer.echo(f"status={run.status}")
+        typer.echo(
+            "totals prompt={prompt} cached={cached} output={candidates} total={total} cache_rate={rate:.2%}".format(
+                **totals, rate=cache_rate
+            )
+        )
+        typer.echo("by_call_kind:")
+        for kind, stats in per_kind.items():
+            typer.echo(
+                f"- {kind}: prompt={stats['prompt']} cached={stats['cached']} output={stats['candidates']} total={stats['total']}"
+            )
+
+
 @app.command()
 def api(host: str = "127.0.0.1", port: int = 8000) -> None:
     """Run the local FastAPI server."""
