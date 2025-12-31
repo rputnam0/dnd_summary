@@ -361,6 +361,7 @@ def search_campaign(
     campaign_slug: str,
     q: str = Query(..., min_length=2),
     include_all_runs: Annotated[bool, Query()] = False,
+    session_id: Annotated[str | None, Query()] = None,
 ) -> dict:
     with get_session() as session:
         campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
@@ -385,6 +386,8 @@ def search_campaign(
                 .filter(Session.campaign_id == campaign.id)
                 .filter(mention_vector.op("@@")(mention_query))
             )
+            if session_id:
+                mentions_query = mentions_query.filter(Mention.session_id == session_id)
             if run_ids is not None:
                 mentions_query = mentions_query.filter(Mention.run_id.in_(run_ids))
             mentions = mentions_query.order_by(mention_rank.desc()).limit(50).all()
@@ -398,6 +401,8 @@ def search_campaign(
                 .filter(Session.campaign_id == campaign.id)
                 .filter(utterance_vector.op("@@")(utterance_query))
             )
+            if session_id:
+                utterances_query = utterances_query.filter(Utterance.session_id == session_id)
             utterances = utterances_query.order_by(utterance_rank.desc()).limit(50).all()
         else:
             like = f"%{q.lower()}%"
@@ -412,18 +417,21 @@ def search_campaign(
                     )
                 )
             )
+            if session_id:
+                mentions_query = mentions_query.filter(Mention.session_id == session_id)
             if run_ids is not None:
                 mentions_query = mentions_query.filter(Mention.run_id.in_(run_ids))
             mentions_raw = mentions_query.limit(50).all()
 
-            utterances_raw = (
+            utterances_query = (
                 session.query(Utterance)
                 .join(Session, Session.id == Utterance.session_id)
                 .filter(Session.campaign_id == campaign.id)
                 .filter(func.lower(Utterance.text).like(like))
-                .limit(50)
-                .all()
             )
+            if session_id:
+                utterances_query = utterances_query.filter(Utterance.session_id == session_id)
+            utterances_raw = utterances_query.limit(50).all()
             mentions = [
                 (
                     m,
@@ -1172,6 +1180,127 @@ def list_runs(session_id: str) -> list[dict]:
             }
             for run in runs
         ]
+
+
+@app.get("/utterances")
+def list_utterances(
+    ids: Annotated[list[str] | None, Query()] = None,
+    session_id: Annotated[str | None, Query()] = None,
+) -> list[dict]:
+    with get_session() as session:
+        if not ids and not session_id:
+            raise HTTPException(
+                status_code=400, detail="Provide ids or session_id to fetch utterances"
+            )
+        query = session.query(Utterance)
+        if session_id:
+            query = query.filter(Utterance.session_id == session_id)
+        if ids:
+            query = query.filter(Utterance.id.in_(ids))
+        utterances = query.all()
+        return [
+            {
+                "id": utt.id,
+                "session_id": utt.session_id,
+                "participant_id": utt.participant_id,
+                "start_ms": utt.start_ms,
+                "end_ms": utt.end_ms,
+                "text": utt.text,
+            }
+            for utt in utterances
+        ]
+
+
+@app.get("/utterances/{utterance_id}")
+def get_utterance(utterance_id: str) -> dict:
+    with get_session() as session:
+        utterance = session.query(Utterance).filter_by(id=utterance_id).first()
+        if not utterance:
+            raise HTTPException(status_code=404, detail="Utterance not found")
+        return {
+            "id": utterance.id,
+            "session_id": utterance.session_id,
+            "participant_id": utterance.participant_id,
+            "start_ms": utterance.start_ms,
+            "end_ms": utterance.end_ms,
+            "text": utterance.text,
+        }
+
+
+@app.get("/campaigns/{campaign_slug}/threads")
+def list_campaign_threads(
+    campaign_slug: str,
+    status: Annotated[str | None, Query()] = None,
+    include_all_runs: Annotated[bool, Query()] = False,
+) -> list[dict]:
+    with get_session() as session:
+        campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+
+        run_ids = None
+        if not include_all_runs:
+            run_ids = _latest_run_ids_for_campaign(session, campaign.id)
+
+        query = (
+            session.query(Thread, Session)
+            .join(Session, Session.id == Thread.session_id)
+            .filter(Session.campaign_id == campaign.id)
+        )
+        if run_ids is not None:
+            query = query.filter(Thread.run_id.in_(run_ids))
+        if status:
+            query = query.filter(Thread.status == status)
+        threads = query.order_by(Session.session_number.asc().nulls_last(), Thread.created_at.asc()).all()
+
+        updates = (
+            session.query(ThreadUpdate)
+            .join(Thread, Thread.id == ThreadUpdate.thread_id)
+            .filter(Thread.session_id.in_([session.id for _, session in threads]))
+        )
+        if run_ids is not None:
+            updates = updates.filter(ThreadUpdate.run_id.in_(run_ids))
+        updates = updates.all()
+
+        updates_by_thread: dict[str, list[ThreadUpdate]] = {}
+        for update in updates:
+            updates_by_thread.setdefault(update.thread_id, []).append(update)
+
+        latest_by_title: dict[str, dict] = {}
+        for thread, sess in threads:
+            key = (thread.title or "").strip().lower()
+            if not key:
+                continue
+            entry = {
+                "id": thread.id,
+                "title": thread.title,
+                "kind": thread.kind,
+                "status": thread.status,
+                "summary": thread.summary,
+                "session_id": thread.session_id,
+                "session_slug": sess.slug,
+                "session_number": sess.session_number,
+                "created_at": thread.created_at.isoformat(),
+                "updates": [
+                    {
+                        "id": update.id,
+                        "note": update.note,
+                        "update_type": update.update_type,
+                        "created_at": update.created_at.isoformat(),
+                    }
+                    for update in updates_by_thread.get(thread.id, [])
+                ],
+            }
+            existing = latest_by_title.get(key)
+            if not existing:
+                latest_by_title[key] = entry
+                continue
+            existing_number = existing.get("session_number") or 0
+            current_number = sess.session_number or 0
+            if current_number >= existing_number:
+                latest_by_title[key] = entry
+
+        return list(latest_by_title.values())
 
 
 @app.get("/sessions/{session_id}/bundle")

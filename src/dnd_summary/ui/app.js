@@ -8,6 +8,7 @@ const state = {
   selectedSession: null,
   selectedRun: null,
   bundle: null,
+  questThreads: [],
 };
 
 const elements = {
@@ -27,9 +28,12 @@ const elements = {
   entityList: document.getElementById("entityList"),
   entityFilter: document.getElementById("entityFilter"),
   timelineList: document.getElementById("timelineList"),
+  questList: document.getElementById("questList"),
+  questFilter: document.getElementById("questFilter"),
   searchInput: document.getElementById("searchInput"),
   searchButton: document.getElementById("searchButton"),
   semanticToggle: document.getElementById("semanticToggle"),
+  sessionOnlyToggle: document.getElementById("sessionOnlyToggle"),
   searchPanel: document.getElementById("searchPanel"),
   searchResults: document.getElementById("searchResults"),
   searchTitle: document.getElementById("searchTitle"),
@@ -40,6 +44,11 @@ const elements = {
   entityMeta: document.getElementById("entityMeta"),
   entityDetails: document.getElementById("entityDetails"),
   closeEntity: document.getElementById("closeEntity"),
+  evidencePanel: document.getElementById("evidencePanel"),
+  evidenceTitle: document.getElementById("evidenceTitle"),
+  evidenceMeta: document.getElementById("evidenceMeta"),
+  evidenceDetails: document.getElementById("evidenceDetails"),
+  closeEvidence: document.getElementById("closeEvidence"),
 };
 
 function setStatus(message) {
@@ -150,6 +159,17 @@ function renderThreads(threads) {
       });
       card.appendChild(updates);
     }
+
+    const evidence = collectEvidence(thread.evidence, thread.updates || []);
+    if (evidence.length > 0) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Evidence";
+      button.addEventListener("click", () =>
+        openEvidence(`Thread: ${thread.title}`, evidence)
+      );
+      card.appendChild(button);
+    }
     elements.threadList.appendChild(card);
   });
 }
@@ -174,6 +194,15 @@ function renderScenes(scenes) {
     const time = `${formatTime(scene.start_ms)} - ${formatTime(scene.end_ms)}`.trim();
     meta.textContent = [scene.location, time].filter(Boolean).join(" | ");
     card.appendChild(meta);
+    if (scene.evidence && scene.evidence.length > 0) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Evidence";
+      button.addEventListener("click", () =>
+        openEvidence(`Scene: ${scene.title || "Scene"}`, scene.evidence)
+      );
+      card.appendChild(button);
+    }
     elements.sceneList.appendChild(card);
   });
 }
@@ -209,6 +238,15 @@ function renderEvents(events) {
       });
       card.appendChild(row);
     }
+    if (event.evidence && event.evidence.length > 0) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Evidence";
+      button.addEventListener("click", () =>
+        openEvidence(`Event: ${event.event_type}`, event.evidence)
+      );
+      card.appendChild(button);
+    }
     elements.eventList.appendChild(card);
   });
 }
@@ -228,6 +266,20 @@ function renderQuotes(quotes) {
     const footer = document.createElement("footer");
     footer.textContent = `${quote.speaker || "Unknown"} ${quote.note ? "- " + quote.note : ""}`;
     card.appendChild(footer);
+    const evidence = [
+      {
+        utterance_id: quote.utterance_id,
+        char_start: quote.char_start,
+        char_end: quote.char_end,
+      },
+    ];
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Evidence";
+    button.addEventListener("click", () =>
+      openEvidence(`Quote: ${quote.speaker || "Unknown"}`, evidence)
+    );
+    card.appendChild(button);
     elements.quoteList.appendChild(card);
   });
 }
@@ -267,6 +319,49 @@ function renderEntities(entities) {
     button.addEventListener("click", () => openEntity(entity));
     card.appendChild(button);
     elements.entityList.appendChild(card);
+  });
+}
+
+function renderQuestJournal(threads) {
+  clearNode(elements.questList);
+  if (!threads || threads.length === 0) {
+    elements.questList.textContent = "No quests found for this campaign.";
+    return;
+  }
+  threads.forEach((thread) => {
+    const card = document.createElement("div");
+    card.className = "thread-card";
+    const title = document.createElement("h3");
+    title.textContent = thread.title;
+    card.appendChild(title);
+    if (thread.summary) {
+      const summary = document.createElement("p");
+      summary.textContent = thread.summary;
+      summary.className = "meta";
+      card.appendChild(summary);
+    }
+    const status = document.createElement("span");
+    status.className = "thread-status";
+    status.textContent = thread.status || "active";
+    card.appendChild(status);
+    if (thread.updates && thread.updates.length > 0) {
+      const updates = document.createElement("ul");
+      updates.className = "thread-updates";
+      thread.updates.slice(0, 3).forEach((update) => {
+        const li = document.createElement("li");
+        li.textContent = update.note || update.update_type;
+        updates.appendChild(li);
+      });
+      card.appendChild(updates);
+    }
+    if (thread.session_id) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Open session";
+      button.addEventListener("click", () => jumpToSession(thread.session_id));
+      card.appendChild(button);
+    }
+    elements.questList.appendChild(card);
   });
 }
 
@@ -319,6 +414,19 @@ function renderTimeline(scenes, events) {
     card.appendChild(body);
     elements.timelineList.appendChild(card);
   });
+}
+
+function collectEvidence(threadEvidence, updates) {
+  const evidence = [];
+  if (threadEvidence && threadEvidence.length > 0) {
+    evidence.push(...threadEvidence);
+  }
+  updates.forEach((update) => {
+    if (update.evidence && update.evidence.length > 0) {
+      evidence.push(...update.evidence);
+    }
+  });
+  return evidence;
 }
 
 function renderSessionMeta(session) {
@@ -405,7 +513,24 @@ async function loadSessions() {
   state.sessionMap = Object.fromEntries(sessions.map((s) => [s.id, s]));
   renderSessions();
   clearNode(elements.runSelect);
+  elements.sessionOnlyToggle.disabled = true;
+  await loadQuestJournal();
   setStatus("Select a session to begin.");
+}
+
+async function loadQuestJournal() {
+  if (!state.selectedCampaign) return;
+  const status = elements.questFilter.value;
+  const query = status && status !== "all" ? `?status=${status}` : "";
+  try {
+    const threads = await fetchJson(`/campaigns/${state.selectedCampaign}/threads${query}`);
+    state.questThreads = threads;
+    renderQuestJournal(threads);
+  } catch (err) {
+    clearNode(elements.questList);
+    elements.questList.textContent = "Failed to load quest journal.";
+    console.error(err);
+  }
 }
 
 async function loadSession(sessionId) {
@@ -413,6 +538,7 @@ async function loadSession(sessionId) {
     return;
   }
   state.selectedSession = sessionId;
+  elements.sessionOnlyToggle.disabled = false;
   state.selectedRun = null;
   renderSessions();
   const session = state.sessionMap[sessionId];
@@ -431,6 +557,74 @@ async function jumpToSession(sessionId) {
   closeSearch();
 }
 
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+async function fetchUtterances(ids) {
+  const params = ids.map((id) => `ids=${encodeURIComponent(id)}`).join("&");
+  return fetchJson(`/utterances?${params}`);
+}
+
+function highlightSpan(text, start, end) {
+  if (start == null || end == null || end <= start) {
+    return escapeHtml(text);
+  }
+  const prefixRaw = text.slice(0, start);
+  const middleRaw = text.slice(start, end);
+  const suffixRaw = text.slice(end);
+  const prefix = escapeHtml(prefixRaw);
+  const middle = escapeHtml(middleRaw);
+  const suffix = escapeHtml(suffixRaw);
+  return `${prefix}<mark>${middle}</mark>${suffix}`;
+}
+
+async function openEvidence(title, evidence) {
+  elements.evidenceTitle.textContent = title;
+  elements.evidenceMeta.textContent = `${evidence.length} evidence spans`;
+  clearNode(elements.evidenceDetails);
+  elements.evidencePanel.classList.remove("hidden");
+  const ids = [...new Set(evidence.map((ev) => ev.utterance_id).filter(Boolean))];
+  if (ids.length === 0) {
+    elements.evidenceDetails.appendChild(
+      renderSearchItem("No evidence spans available.", null)
+    );
+    return;
+  }
+  try {
+    const utterances = await fetchUtterances(ids);
+    const lookup = new Map(utterances.map((utt) => [utt.id, utt]));
+    evidence.forEach((ev) => {
+      const utt = lookup.get(ev.utterance_id);
+      if (!utt) {
+        return;
+      }
+      const item = document.createElement("div");
+      item.className = "search-item";
+      const html = highlightSpan(utt.text, ev.char_start, ev.char_end);
+      item.innerHTML = html;
+      const meta = document.createElement("small");
+      meta.textContent = `${formatTime(utt.start_ms)} - ${formatTime(utt.end_ms)}`;
+      item.appendChild(meta);
+      elements.evidenceDetails.appendChild(item);
+    });
+  } catch (err) {
+    elements.evidenceDetails.appendChild(
+      renderSearchItem("Failed to load evidence.", null)
+    );
+    console.error(err);
+  }
+}
+
+function closeEvidencePanel() {
+  elements.evidencePanel.classList.add("hidden");
+}
+
 function populateRunSelect(runs) {
   clearNode(elements.runSelect);
   if (!runs || runs.length === 0) {
@@ -447,6 +641,7 @@ function populateRunSelect(runs) {
     option.textContent = `${index === 0 ? "Latest" : "Run"} ${created}`;
     elements.runSelect.appendChild(option);
   });
+  elements.runSelect.value = runs[0].id;
 }
 
 async function loadBundle(sessionId, runId) {
@@ -662,9 +857,13 @@ async function runSearch() {
   }
   setStatus("Searching...");
   const semantic = elements.semanticToggle.checked;
+  const sessionScope =
+    elements.sessionOnlyToggle.checked && state.selectedSession
+      ? `&session_id=${encodeURIComponent(state.selectedSession)}`
+      : "";
   const endpoint = semantic
-    ? `/campaigns/${state.selectedCampaign}/semantic_search?q=${encodeURIComponent(query)}`
-    : `/campaigns/${state.selectedCampaign}/search?q=${encodeURIComponent(query)}`;
+    ? `/campaigns/${state.selectedCampaign}/semantic_search?q=${encodeURIComponent(query)}${sessionScope}`
+    : `/campaigns/${state.selectedCampaign}/search?q=${encodeURIComponent(query)}${sessionScope}`;
   try {
     const data = await fetchJson(endpoint);
     renderSearchResults(query, data, semantic);
@@ -692,6 +891,7 @@ async function init() {
   });
   elements.closeSearch.addEventListener("click", closeSearch);
   elements.closeEntity.addEventListener("click", closeEntityPanel);
+  elements.closeEvidence.addEventListener("click", closeEvidencePanel);
   elements.searchPanel.addEventListener("click", (event) => {
     if (event.target === elements.searchPanel) {
       closeSearch();
@@ -702,10 +902,18 @@ async function init() {
       closeEntityPanel();
     }
   });
+  elements.evidencePanel.addEventListener("click", (event) => {
+    if (event.target === elements.evidencePanel) {
+      closeEvidencePanel();
+    }
+  });
   elements.entityFilter.addEventListener("change", () => {
     if (state.bundle) {
       renderEntities(state.bundle.entities || []);
     }
+  });
+  elements.questFilter.addEventListener("change", async () => {
+    await loadQuestJournal();
   });
   elements.runSelect.addEventListener("change", async (event) => {
     const runId = event.target.value;

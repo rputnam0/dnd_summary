@@ -36,6 +36,10 @@
               <input id="semanticToggle" type="checkbox" checked />
               <span>Semantic Search</span>
             </label>
+            <label class="toggle">
+              <input id="sessionOnlyToggle" type="checkbox" />
+              <span>Current session only</span>
+            </label>
           </div>
         </div>
       </header>
@@ -66,6 +70,26 @@
             <div id="runMetrics" class="metrics"></div>
             <div id="summaryText" class="summary-text"></div>
             <div id="artifactLinks" class="artifact-links"></div>
+          </section>
+
+          <section id="questSection" class="panel">
+            <div class="panel-header">
+              <h2>Quest Journal</h2>
+              <span class="badge">Campaign</span>
+            </div>
+            <div class="entity-controls">
+              <label for="questFilter">Status</label>
+              <select id="questFilter">
+                <option value="all">All</option>
+                <option value="active">Active</option>
+                <option value="proposed">Proposed</option>
+                <option value="completed">Completed</option>
+                <option value="blocked">Blocked</option>
+                <option value="failed">Failed</option>
+                <option value="abandoned">Abandoned</option>
+              </select>
+            </div>
+            <div id="questList" class="thread-grid"></div>
           </section>
 
           <section id="timelineSection" class="panel">
@@ -157,6 +181,20 @@
           <button id="closeEntity" type="button">Close</button>
         </div>
         <div id="entityDetails" class="search-results"></div>
+      </div>
+    </div>
+
+    <div id="evidencePanel" class="search-panel hidden">
+      <div class="search-card">
+        <div class="search-header">
+          <div>
+            <p class="eyebrow">Evidence</p>
+            <h3 id="evidenceTitle">Evidence</h3>
+            <p id="evidenceMeta" class="meta"></p>
+          </div>
+          <button id="closeEvidence" type="button">Close</button>
+        </div>
+        <div id="evidenceDetails" class="search-results"></div>
       </div>
     </div>
 

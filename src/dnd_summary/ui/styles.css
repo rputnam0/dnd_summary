@@ -564,6 +564,13 @@ button:hover {
   font-family: "Source Sans 3", sans-serif;
 }
 
+.search-item mark {
+  background: rgba(207, 174, 88, 0.35);
+  color: #1a1410;
+  padding: 0 2px;
+  border-radius: 4px;
+}
+
 @keyframes fadeUp {
   from {
     opacity: 0;
