@@ -226,7 +226,7 @@ def main() -> None:
         npcs = _extract_npcs(text)
         locations, items = _extract_locations_items(text)
         factions = _extract_factions(text)
-        if not npcs:
+        if not any([npcs, locations, items, factions]):
             continue
         session_slug = _session_slug_from_name(analysis_path)
         if not session_slug:

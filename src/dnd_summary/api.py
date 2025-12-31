@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import re
+from typing import Annotated
+
 from fastapi import FastAPI, HTTPException, Query
-from sqlalchemy import func, or_, text
+from sqlalchemy import func, or_
 
 from dnd_summary.db import get_session
 from dnd_summary.models import (
@@ -10,6 +13,7 @@ from dnd_summary.models import (
     Entity,
     Event,
     Quote,
+    Run,
     Scene,
     Session,
     SessionExtraction,
@@ -84,12 +88,16 @@ def list_entities(campaign_slug: str) -> list[dict]:
 
 
 @app.get("/sessions/{session_id}/entities")
-def list_session_entities(session_id: str) -> list[dict]:
+def list_session_entities(
+    session_id: str,
+    run_id: Annotated[str | None, Query()] = None,
+) -> list[dict]:
     with get_session() as session:
+        resolved_run_id = _resolve_run_id(session, session_id, run_id)
         entities = (
             session.query(Entity)
             .join(EntityMention, EntityMention.entity_id == Entity.id)
-            .filter(EntityMention.session_id == session_id)
+            .filter(EntityMention.session_id == session_id, EntityMention.run_id == resolved_run_id)
             .order_by(Entity.entity_type.asc(), Entity.canonical_name.asc())
             .distinct()
             .all()
@@ -106,13 +114,17 @@ def list_session_entities(session_id: str) -> list[dict]:
 
 
 @app.get("/sessions/{session_id}/mentions")
-def list_mentions(session_id: str) -> list[dict]:
+def list_mentions(
+    session_id: str,
+    run_id: Annotated[str | None, Query()] = None,
+) -> list[dict]:
     with get_session() as session:
+        resolved_run_id = _resolve_run_id(session, session_id, run_id)
         mentions = (
             session.query(Mention, Entity)
             .outerjoin(EntityMention, EntityMention.mention_id == Mention.id)
             .outerjoin(Entity, Entity.id == EntityMention.entity_id)
-            .filter(Mention.session_id == session_id)
+            .filter(Mention.session_id == session_id, Mention.run_id == resolved_run_id)
             .order_by(Mention.created_at.asc(), Mention.id.asc())
             .all()
         )
@@ -133,9 +145,17 @@ def list_mentions(session_id: str) -> list[dict]:
 
 
 @app.get("/sessions/{session_id}/quotes")
-def list_quotes(session_id: str) -> list[dict]:
+def list_quotes(
+    session_id: str,
+    run_id: Annotated[str | None, Query()] = None,
+) -> list[dict]:
     with get_session() as session:
-        quotes = session.query(Quote).filter_by(session_id=session_id).all()
+        resolved_run_id = _resolve_run_id(session, session_id, run_id)
+        quotes = (
+            session.query(Quote)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
+            .all()
+        )
         return [
             {
                 "id": q.id,
@@ -153,45 +173,48 @@ def list_quotes(session_id: str) -> list[dict]:
 def search_campaign(
     campaign_slug: str,
     q: str = Query(..., min_length=2),
+    include_all_runs: Annotated[bool, Query()] = False,
 ) -> dict:
     with get_session() as session:
         campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
         if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
 
+        run_ids = None
+        if not include_all_runs:
+            run_ids = _latest_run_ids_for_campaign(session, campaign.id)
+
         dialect = session.bind.dialect.name if session.bind else "unknown"
         if dialect == "postgresql":
-            mentions = (
-                session.query(Mention)
+            mention_vector = func.to_tsvector(
+                "english",
+                Mention.text + " " + func.coalesce(Mention.description, ""),
+            )
+            mention_query = func.plainto_tsquery("english", q)
+            mention_rank = func.ts_rank_cd(mention_vector, mention_query).label("rank")
+            mentions_query = (
+                session.query(Mention, mention_rank)
                 .join(Session, Session.id == Mention.session_id)
                 .filter(Session.campaign_id == campaign.id)
-                .filter(
-                    text(
-                        "to_tsvector('english', mentions.text || ' ' || "
-                        "coalesce(mentions.description, '')) @@ plainto_tsquery(:q)"
-                    )
-                )
-                .params(q=q)
-                .limit(50)
-                .all()
+                .filter(mention_vector.op("@@")(mention_query))
             )
-            utterances = (
-                session.query(Utterance)
+            if run_ids is not None:
+                mentions_query = mentions_query.filter(Mention.run_id.in_(run_ids))
+            mentions = mentions_query.order_by(mention_rank.desc()).limit(50).all()
+
+            utterance_vector = func.to_tsvector("english", Utterance.text)
+            utterance_query = func.plainto_tsquery("english", q)
+            utterance_rank = func.ts_rank_cd(utterance_vector, utterance_query).label("rank")
+            utterances_query = (
+                session.query(Utterance, utterance_rank)
                 .join(Session, Session.id == Utterance.session_id)
                 .filter(Session.campaign_id == campaign.id)
-                .filter(
-                    text(
-                        "to_tsvector('english', utterances.text) "
-                        "@@ plainto_tsquery(:q)"
-                    )
-                )
-                .params(q=q)
-                .limit(50)
-                .all()
+                .filter(utterance_vector.op("@@")(utterance_query))
             )
+            utterances = utterances_query.order_by(utterance_rank.desc()).limit(50).all()
         else:
             like = f"%{q.lower()}%"
-            mentions = (
+            mentions_query = (
                 session.query(Mention)
                 .join(Session, Session.id == Mention.session_id)
                 .filter(Session.campaign_id == campaign.id)
@@ -201,10 +224,12 @@ def search_campaign(
                         func.lower(func.coalesce(Mention.description, "")).like(like),
                     )
                 )
-                .limit(50)
-                .all()
             )
-            utterances = (
+            if run_ids is not None:
+                mentions_query = mentions_query.filter(Mention.run_id.in_(run_ids))
+            mentions_raw = mentions_query.limit(50).all()
+
+            utterances_raw = (
                 session.query(Utterance)
                 .join(Session, Session.id == Utterance.session_id)
                 .filter(Session.campaign_id == campaign.id)
@@ -212,6 +237,22 @@ def search_campaign(
                 .limit(50)
                 .all()
             )
+            mentions = [
+                (
+                    m,
+                    _simple_score(f"{m.text} {m.description or ''}", q),
+                )
+                for m in mentions_raw
+            ]
+            utterances = [
+                (
+                    u,
+                    _simple_score(u.text, q),
+                )
+                for u in utterances_raw
+            ]
+            mentions.sort(key=lambda item: item[1], reverse=True)
+            utterances.sort(key=lambda item: item[1], reverse=True)
 
         return {
             "mentions": [
@@ -222,8 +263,9 @@ def search_campaign(
                     "entity_type": m.entity_type,
                     "description": m.description,
                     "evidence": m.evidence,
+                    "score": float(rank) if rank is not None else None,
                 }
-                for m in mentions
+                for m, rank in mentions
             ],
             "utterances": [
                 {
@@ -233,18 +275,23 @@ def search_campaign(
                     "start_ms": u.start_ms,
                     "end_ms": u.end_ms,
                     "text": u.text,
+                    "score": float(rank) if rank is not None else None,
                 }
-                for u in utterances
+                for u, rank in utterances
             ],
         }
 
 
 @app.get("/sessions/{session_id}/scenes")
-def list_scenes(session_id: str) -> list[dict]:
+def list_scenes(
+    session_id: str,
+    run_id: Annotated[str | None, Query()] = None,
+) -> list[dict]:
     with get_session() as session:
+        resolved_run_id = _resolve_run_id(session, session_id, run_id)
         scenes = (
             session.query(Scene)
-            .filter_by(session_id=session_id)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
             .order_by(Scene.start_ms.asc(), Scene.id.asc())
             .all()
         )
@@ -264,11 +311,15 @@ def list_scenes(session_id: str) -> list[dict]:
 
 
 @app.get("/sessions/{session_id}/events")
-def list_events(session_id: str) -> list[dict]:
+def list_events(
+    session_id: str,
+    run_id: Annotated[str | None, Query()] = None,
+) -> list[dict]:
     with get_session() as session:
+        resolved_run_id = _resolve_run_id(session, session_id, run_id)
         events = (
             session.query(Event)
-            .filter_by(session_id=session_id)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
             .order_by(Event.start_ms.asc(), Event.id.asc())
             .all()
         )
@@ -288,17 +339,21 @@ def list_events(session_id: str) -> list[dict]:
 
 
 @app.get("/sessions/{session_id}/threads")
-def list_threads(session_id: str) -> list[dict]:
+def list_threads(
+    session_id: str,
+    run_id: Annotated[str | None, Query()] = None,
+) -> list[dict]:
     with get_session() as session:
+        resolved_run_id = _resolve_run_id(session, session_id, run_id)
         threads = (
             session.query(Thread)
-            .filter_by(session_id=session_id)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
             .order_by(Thread.created_at.asc(), Thread.id.asc())
             .all()
         )
         thread_updates = (
             session.query(ThreadUpdate)
-            .filter_by(session_id=session_id)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
             .order_by(ThreadUpdate.created_at.asc(), ThreadUpdate.id.asc())
             .all()
         )
@@ -340,6 +395,45 @@ def _utterance_ids_from_evidence(entries: list[dict] | None) -> set[str]:
     return ids
 
 
+def _resolve_run_id(session, session_id: str, run_id: str | None) -> str:
+    if run_id:
+        run = session.query(Run).filter_by(id=run_id, session_id=session_id).first()
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found for session")
+        return run.id
+    run = (
+        session.query(Run)
+        .filter_by(session_id=session_id)
+        .order_by(Run.created_at.desc())
+        .first()
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found for session")
+    return run.id
+
+
+def _latest_run_ids_for_campaign(session, campaign_id: str) -> set[str]:
+    runs = (
+        session.query(Run)
+        .filter_by(campaign_id=campaign_id)
+        .order_by(Run.created_at.desc())
+        .all()
+    )
+    latest_by_session: dict[str, str] = {}
+    for run in runs:
+        if run.session_id not in latest_by_session:
+            latest_by_session[run.session_id] = run.id
+    return set(latest_by_session.values())
+
+
+def _simple_score(text: str, query: str) -> float:
+    hay = text.lower()
+    needle = query.lower()
+    if not hay or not needle:
+        return 0.0
+    return float(hay.count(needle))
+
+
 @app.get("/threads/{thread_id}/mentions")
 def list_thread_mentions(thread_id: str) -> list[dict]:
     with get_session() as session:
@@ -352,8 +446,13 @@ def list_thread_mentions(thread_id: str) -> list[dict]:
         utterance_ids |= _utterance_ids_from_evidence(thread.evidence)
         for update in updates:
             utterance_ids |= _utterance_ids_from_evidence(update.evidence)
+        utterance_ids |= _thread_event_utterance_ids(session, thread)
 
-        mentions = session.query(Mention).filter_by(session_id=thread.session_id).all()
+        mentions = (
+            session.query(Mention)
+            .filter_by(session_id=thread.session_id, run_id=thread.run_id)
+            .all()
+        )
         results = []
         for mention in mentions:
             evidence = mention.evidence or []
@@ -369,6 +468,25 @@ def list_thread_mentions(thread_id: str) -> list[dict]:
                     "confidence": mention.confidence,
                 }
             )
+        if results:
+            return results
+
+        tokens = _thread_title_tokens(thread.title)
+        if not tokens:
+            return results
+        for mention in mentions:
+            haystack = f"{mention.text} {mention.description or ''}".lower()
+            if any(token in haystack for token in tokens):
+                results.append(
+                    {
+                        "id": mention.id,
+                        "text": mention.text,
+                        "entity_type": mention.entity_type,
+                        "description": mention.description,
+                        "evidence": mention.evidence,
+                        "confidence": mention.confidence,
+                    }
+                )
         return results
 
 
@@ -384,16 +502,58 @@ def list_thread_quotes(thread_id: str) -> list[dict]:
         utterance_ids |= _utterance_ids_from_evidence(thread.evidence)
         for update in updates:
             utterance_ids |= _utterance_ids_from_evidence(update.evidence)
+        utterance_ids |= _thread_event_utterance_ids(session, thread)
 
         if not utterance_ids:
-            return []
+            tokens = _thread_title_tokens(thread.title)
+            if not tokens:
+                return []
+            utterances = (
+                session.query(Utterance)
+                .filter_by(session_id=thread.session_id)
+                .all()
+            )
+            candidate_ids = [
+                u.id
+                for u in utterances
+                if any(token in u.text.lower() for token in tokens)
+            ]
+            if not candidate_ids:
+                return []
+            utterance_ids = set(candidate_ids)
 
         quotes = (
             session.query(Quote)
-            .filter(Quote.session_id == thread.session_id)
+            .filter(
+                Quote.session_id == thread.session_id,
+                Quote.run_id == thread.run_id,
+            )
             .filter(Quote.utterance_id.in_(sorted(utterance_ids)))
             .all()
         )
+        if not quotes:
+            tokens = _thread_title_tokens(thread.title)
+            if tokens:
+                utterances = (
+                    session.query(Utterance)
+                    .filter_by(session_id=thread.session_id)
+                    .all()
+                )
+                candidate_ids = [
+                    u.id
+                    for u in utterances
+                    if any(token in u.text.lower() for token in tokens)
+                ]
+                if candidate_ids:
+                    quotes = (
+                        session.query(Quote)
+                        .filter(
+                            Quote.session_id == thread.session_id,
+                            Quote.run_id == thread.run_id,
+                        )
+                        .filter(Quote.utterance_id.in_(sorted(set(candidate_ids))))
+                        .all()
+                    )
         return [
             {
                 "id": q.id,
@@ -408,9 +568,17 @@ def list_thread_quotes(thread_id: str) -> list[dict]:
 
 
 @app.get("/sessions/{session_id}/artifacts")
-def list_artifacts(session_id: str) -> list[dict]:
+def list_artifacts(
+    session_id: str,
+    run_id: Annotated[str | None, Query()] = None,
+) -> list[dict]:
     with get_session() as session:
-        artifacts = session.query(Artifact).filter_by(session_id=session_id).all()
+        resolved_run_id = _resolve_run_id(session, session_id, run_id)
+        artifacts = (
+            session.query(Artifact)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
+            .all()
+        )
         return [
             {
                 "id": a.id,
@@ -423,14 +591,41 @@ def list_artifacts(session_id: str) -> list[dict]:
 
 
 @app.get("/sessions/{session_id}/summary")
-def get_summary(session_id: str) -> dict:
+def get_summary(
+    session_id: str,
+    run_id: Annotated[str | None, Query()] = None,
+) -> dict:
     with get_session() as session:
+        resolved_run_id = _resolve_run_id(session, session_id, run_id)
         summary = (
             session.query(SessionExtraction)
-            .filter_by(session_id=session_id, kind="summary_text")
+            .filter_by(session_id=session_id, run_id=resolved_run_id, kind="summary_text")
             .order_by(SessionExtraction.created_at.desc())
             .first()
         )
         if not summary:
             raise HTTPException(status_code=404, detail="Summary not found")
         return {"text": summary.payload.get("text", "")}
+
+
+def _thread_event_utterance_ids(session, thread: Thread) -> set[str]:
+    ids: set[str] = set()
+    events = (
+        session.query(Event)
+        .filter_by(session_id=thread.session_id, run_id=thread.run_id)
+        .all()
+    )
+    title = (thread.title or "").lower()
+    tokens = _thread_title_tokens(thread.title)
+    for event in events:
+        summary = (event.summary or "").lower()
+        if event.event_type == "thread_update" or any(token in summary for token in tokens):
+            ids |= _utterance_ids_from_evidence(event.evidence)
+    return ids
+
+
+def _thread_title_tokens(title: str | None) -> list[str]:
+    if not title:
+        return []
+    tokens = [token for token in re.split(r"\W+", title.lower()) if len(token) > 3]
+    return tokens

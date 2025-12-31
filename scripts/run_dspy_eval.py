@@ -127,10 +127,12 @@ def main() -> None:
         gold = row.get(gold_key, [])
 
         prediction = predictor(transcript=transcript_text)
+        parse_error = False
         try:
             predicted = json.loads(getattr(prediction, output_key))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
             predicted = []
+            parse_error = True
         scores = _score(predicted, gold)
         results.append(
             {
@@ -139,6 +141,7 @@ def main() -> None:
                 "gold": gold,
                 "predicted": predicted,
                 "scores": scores,
+                "parse_error": parse_error,
             }
         )
 
@@ -151,6 +154,8 @@ def main() -> None:
         "avg_precision": sum(r["scores"]["precision"] for r in results) / len(results),
         "avg_recall": sum(r["scores"]["recall"] for r in results) / len(results),
         "avg_f1": sum(r["scores"]["f1"] for r in results) / len(results),
+        "parse_errors": sum(1 for r in results if r["parse_error"]),
+        "parse_error_rate": sum(1 for r in results if r["parse_error"]) / len(results),
     }
 
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
