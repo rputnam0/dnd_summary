@@ -11,13 +11,20 @@ Each line contains:
 }
 ```
 
+## Build a dataset from legacy analysis docs
+If you have legacy analysis outputs under `legacy/summaries/**/raw_txt/`, you can
+generate a rough gold set:
+```
+uv run python scripts/build_eval_from_analysis.py
+```
+
 ## Run NPC extraction eval
 Install eval deps:
 - `uv pip install -e ".[eval]"`
 
 Run:
 ```
-uv run python scripts/run_dspy_eval.py --dataset evals/npc_eval_template.jsonl
+uv run python scripts/run_dspy_eval.py --dataset evals/npc_eval_template.jsonl --limit 3
 ```
 
 Results land under `artifacts/evals/<run_id>/`.

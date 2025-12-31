@@ -17,6 +17,8 @@ class ExtractNPCs(dspy.Signature):
 
 
 def _normalize(name: str) -> str:
+    name = re.sub(r"\([^)]*\)", "", name)
+    name = re.sub(r"[^a-zA-Z0-9\\s]+", " ", name)
     return re.sub(r"\s+", " ", name.strip().lower())
 
 
@@ -36,15 +38,27 @@ def _read_transcript(path: Path) -> str:
 
 
 def _score(predicted: list[str], gold: list[str]) -> dict:
-    pred_set = {_normalize(p) for p in predicted if p.strip()}
-    gold_set = {_normalize(g) for g in gold if g.strip()}
-    if not pred_set and not gold_set:
+    pred_list = [_normalize(p) for p in predicted if p.strip()]
+    gold_list = [_normalize(g) for g in gold if g.strip()]
+    if not pred_list and not gold_list:
         return {"precision": 1.0, "recall": 1.0, "f1": 1.0}
-    if not pred_set or not gold_set:
+    if not pred_list or not gold_list:
         return {"precision": 0.0, "recall": 0.0, "f1": 0.0}
-    tp = len(pred_set & gold_set)
-    precision = tp / len(pred_set)
-    recall = tp / len(gold_set)
+
+    matched_gold = set()
+    matched_pred = set()
+    for pi, pred in enumerate(pred_list):
+        for gi, gold_name in enumerate(gold_list):
+            if gi in matched_gold:
+                continue
+            if pred == gold_name or pred in gold_name or gold_name in pred:
+                matched_pred.add(pi)
+                matched_gold.add(gi)
+                break
+
+    tp = len(matched_pred)
+    precision = tp / len(pred_list)
+    recall = tp / len(gold_list)
     if precision + recall == 0:
         f1 = 0.0
     else:
@@ -57,14 +71,20 @@ def main() -> None:
     parser.add_argument("--dataset", required=True, help="Path to JSONL eval set.")
     parser.add_argument("--output-dir", default="artifacts/evals", help="Output directory.")
     parser.add_argument("--model", default=settings.gemini_model, help="Model name.")
+    parser.add_argument("--limit", type=int, default=0, help="Limit number of rows.")
     args = parser.parse_args()
 
     dataset_path = Path(args.dataset)
     rows = _load_dataset(dataset_path)
+    if args.limit:
+        rows = rows[: args.limit]
     if not rows:
         raise SystemExit("Dataset is empty.")
 
-    lm = dspy.LM(model=args.model, api_key=settings.gemini_api_key)
+    model = args.model
+    if "/" not in model:
+        model = f"gemini/{model}"
+    lm = dspy.LM(model=model, api_key=settings.gemini_api_key)
     dspy.settings.configure(lm=lm)
     predictor = dspy.Predict(ExtractNPCs)
 
