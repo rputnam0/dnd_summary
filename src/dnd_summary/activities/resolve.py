@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+from temporalio import activity
+
+from dnd_summary.db import ENGINE, get_session
+from dnd_summary.models import Base, Entity, EntityMention, Mention, Run
+
+
+def _normalize_key(text: str) -> str:
+    return " ".join(text.lower().split())
+
+
+@activity.defn
+async def resolve_entities_activity(payload: dict) -> dict:
+    Base.metadata.create_all(bind=ENGINE)
+    run_id = payload["run_id"]
+    session_id = payload["session_id"]
+
+    with get_session() as session:
+        run = session.query(Run).filter_by(id=run_id).one()
+        mentions = (
+            session.query(Mention)
+            .filter_by(run_id=run_id, session_id=session_id)
+            .all()
+        )
+
+        created = 0
+        linked = 0
+        for mention in mentions:
+            key = _normalize_key(mention.text)
+            entity = (
+                session.query(Entity)
+                .filter_by(
+                    campaign_id=run.campaign_id,
+                    entity_type=mention.entity_type,
+                    canonical_name=key,
+                )
+                .one_or_none()
+            )
+            if not entity:
+                entity = Entity(
+                    campaign_id=run.campaign_id,
+                    canonical_name=key,
+                    entity_type=mention.entity_type,
+                    description=mention.description,
+                )
+                session.add(entity)
+                session.flush()
+                created += 1
+
+            mention_link = EntityMention(
+                run_id=run_id,
+                session_id=session_id,
+                mention_id=mention.id,
+                entity_id=entity.id,
+            )
+            session.add(mention_link)
+            linked += 1
+
+    return {
+        "run_id": run_id,
+        "session_id": session_id,
+        "entities_created": created,
+        "mentions_linked": linked,
+    }

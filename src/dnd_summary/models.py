@@ -198,6 +198,41 @@ class ThreadUpdate(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class Entity(Base):
+    __tablename__ = "entities"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False)
+    canonical_name: Mapped[str] = mapped_column(String, nullable=False)
+    entity_type: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    character_kind: Mapped[str | None] = mapped_column(String, nullable=True)
+    owner_participant_id: Mapped[str | None] = mapped_column(
+        ForeignKey("participants.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "campaign_id",
+            "entity_type",
+            "canonical_name",
+            name="uq_entity_campaign_type_name",
+        ),
+    )
+
+
+class EntityMention(Base):
+    __tablename__ = "entity_mentions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), nullable=False)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    mention_id: Mapped[str] = mapped_column(ForeignKey("mentions.id"), nullable=False)
+    entity_id: Mapped[str] = mapped_column(ForeignKey("entities.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class Artifact(Base):
     __tablename__ = "artifacts"
 
