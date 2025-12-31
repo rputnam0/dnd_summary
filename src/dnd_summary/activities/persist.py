@@ -12,8 +12,51 @@ from dnd_summary.models import (
     SessionExtraction,
     Thread,
     ThreadUpdate,
+    Utterance,
 )
 from dnd_summary.schemas import SessionFacts
+
+
+def _clean_evidence(utterance_lookup: dict[str, str], evidence_list: list) -> tuple[list, int]:
+    cleaned = []
+    dropped = 0
+    for evidence in evidence_list:
+        utterance_text = utterance_lookup.get(evidence.utterance_id)
+        if utterance_text is None:
+            dropped += 1
+            continue
+        if evidence.char_start is None or evidence.char_end is None:
+            cleaned.append(evidence)
+            continue
+        if evidence.char_start < 0 or evidence.char_end <= evidence.char_start:
+            dropped += 1
+            continue
+        if evidence.char_end > len(utterance_text):
+            dropped += 1
+            continue
+        cleaned.append(evidence)
+    return cleaned, dropped
+
+
+def _clean_quotes(utterance_lookup: dict[str, str], facts: SessionFacts) -> tuple[list, int]:
+    cleaned = []
+    dropped = 0
+    for quote in facts.quotes:
+        utterance_text = utterance_lookup.get(quote.utterance_id)
+        if utterance_text is None:
+            dropped += 1
+            continue
+        if quote.char_start is None or quote.char_end is None:
+            dropped += 1
+            continue
+        if quote.char_start < 0 or quote.char_end <= quote.char_start:
+            dropped += 1
+            continue
+        if quote.char_end > len(utterance_text):
+            dropped += 1
+            continue
+        cleaned.append(quote)
+    return cleaned, dropped
 
 
 @activity.defn
@@ -33,9 +76,33 @@ async def persist_session_facts_activity(payload: dict) -> dict:
             raise ValueError("Missing session_facts extraction")
 
         facts = SessionFacts.model_validate(extraction.payload)
+        utterances = (
+            session.query(Utterance)
+            .filter_by(session_id=session_id)
+            .all()
+        )
+        utterance_lookup = {utt.id: utt.text for utt in utterances}
+        cleaned_quotes, dropped_quotes = _clean_quotes(utterance_lookup, facts)
 
         for model in (Mention, Scene, Event, Quote, Thread, ThreadUpdate):
             session.query(model).filter_by(run_id=run_id, session_id=session_id).delete()
+
+        dropped_evidence = 0
+        for mention in facts.mentions:
+            mention.evidence, dropped = _clean_evidence(utterance_lookup, mention.evidence)
+            dropped_evidence += dropped
+        for scene in facts.scenes:
+            scene.evidence, dropped = _clean_evidence(utterance_lookup, scene.evidence)
+            dropped_evidence += dropped
+        for event in facts.events:
+            event.evidence, dropped = _clean_evidence(utterance_lookup, event.evidence)
+            dropped_evidence += dropped
+        for thread in facts.threads:
+            thread.evidence, dropped = _clean_evidence(utterance_lookup, thread.evidence)
+            dropped_evidence += dropped
+            for update in thread.updates:
+                update.evidence, dropped = _clean_evidence(utterance_lookup, update.evidence)
+                dropped_evidence += dropped
 
         mentions = [
             Mention(
@@ -87,7 +154,7 @@ async def persist_session_facts_activity(payload: dict) -> dict:
                 speaker=quote.speaker,
                 note=quote.note,
             )
-            for quote in facts.quotes
+            for quote in cleaned_quotes
         ]
 
         session.add_all(mentions)
@@ -135,6 +202,7 @@ async def persist_session_facts_activity(payload: dict) -> dict:
         "scenes": len(facts.scenes),
         "events": len(facts.events),
         "threads": len(facts.threads),
-        "quotes": len(facts.quotes),
+        "quotes": len(cleaned_quotes),
+        "quotes_dropped": dropped_quotes,
+        "evidence_dropped": dropped_evidence,
     }
-

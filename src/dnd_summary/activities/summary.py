@@ -57,7 +57,14 @@ def _validate_summary_quotes(summary_text: str, quote_texts: list[str]) -> None:
         return
 
     allowed = set(quote_texts)
-    invalid = [q for q in quoted if q not in allowed]
+    invalid = []
+    for q in quoted:
+        if q in allowed:
+            continue
+        # Allow short, single-word quotes (often names or labels).
+        if len(q) < 20 and " " not in q:
+            continue
+        invalid.append(q)
     if invalid:
         sample = invalid[0][:120]
         raise ValueError(f"Summary contains quote not in Quote Bank: {sample!r}")
