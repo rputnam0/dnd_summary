@@ -1,0 +1,38 @@
+# Legacy prototype / reference assets (kept locally, not versioned)
+legacy/
+
+# Canonical transcripts (user data; keep out of git)
+transcripts/campaigns/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.Python
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Virtualenvs
+.venv/
+venv/
+
+# Local app outputs
+artifacts/
+.artifacts/
+
+# Transcriber byproducts (if this repo is used alongside it)
+transcriber/.outputs/
+transcriber/outputs/
+transcriber/.hf_cache/
+
+# OS / editor noise
+desktop.ini
+.DS_Store
+.idea/
+.vscode/

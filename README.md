@@ -1,0 +1,25 @@
+# dnd_summary
+
+Production-oriented pipeline to turn D&D session transcripts into:
+- Structured, queryable campaign memory (Postgres)
+- High-quality narrative summaries (DOCX export + UI-ready data)
+
+This repo is being rebuilt from an early prototype. The original notebook-derived script and prompt files are kept under `legacy/` (gitignored) for reference only.
+
+## Local dev (Temporal + Postgres)
+
+Bring up infrastructure:
+- `docker compose up -d`
+
+Services:
+- Temporal server: `localhost:7233`
+- Temporal UI: `http://localhost:8080`
+- App Postgres: `localhost:5432` (DB: `dnd_summary`)
+
+## Canonical transcript inputs
+
+Canonical ingestion source lives under `transcripts/` (multi-campaign):
+- `transcripts/campaigns/<campaign_slug>/sessions/<session_slug>/...`
+
+The pipeline will prefer `.jsonl` transcripts when present, falling back to `.txt`.
+

@@ -1,0 +1,26 @@
+[project]
+name = "dnd-summary"
+version = "0.0.0"
+description = "Temporal-orchestrated D&D transcript summarization pipeline"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.7",
+  "pydantic-settings>=2.3",
+  "sqlalchemy>=2.0",
+  "psycopg[binary]>=3.2",
+  "temporalio>=1.7",
+  "typer>=0.12",
+  "python-docx>=1.1",
+  "google-genai>=1.0.0",
+]
+
+[project.scripts]
+dnd-summary = "dnd_summary.cli:app"
+
+[tool.ruff]
+line-length = 100
+
+[tool.black]
+line-length = 100
+
