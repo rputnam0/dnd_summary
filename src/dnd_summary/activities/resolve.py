@@ -3,7 +3,7 @@ from __future__ import annotations
 from temporalio import activity
 
 from dnd_summary.db import ENGINE, get_session
-from dnd_summary.models import Base, Entity, EntityMention, Mention, Run
+from dnd_summary.models import Base, Entity, EntityAlias, EntityMention, Mention, Run
 
 
 def _normalize_key(text: str) -> str:
@@ -26,6 +26,7 @@ async def resolve_entities_activity(payload: dict) -> dict:
 
         created = 0
         linked = 0
+        aliases_added = 0
         for mention in mentions:
             key = _normalize_key(mention.text)
             entity = (
@@ -48,6 +49,16 @@ async def resolve_entities_activity(payload: dict) -> dict:
                 session.flush()
                 created += 1
 
+            if mention.text.strip() and mention.text.strip().lower() != entity.canonical_name:
+                alias = (
+                    session.query(EntityAlias)
+                    .filter_by(entity_id=entity.id, alias=mention.text.strip())
+                    .one_or_none()
+                )
+                if not alias:
+                    session.add(EntityAlias(entity_id=entity.id, alias=mention.text.strip()))
+                    aliases_added += 1
+
             mention_link = EntityMention(
                 run_id=run_id,
                 session_id=session_id,
@@ -62,4 +73,5 @@ async def resolve_entities_activity(payload: dict) -> dict:
         "session_id": session_id,
         "entities_created": created,
         "mentions_linked": linked,
+        "aliases_added": aliases_added,
     }

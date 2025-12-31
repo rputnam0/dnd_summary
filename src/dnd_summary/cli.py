@@ -98,5 +98,25 @@ def inspect_session(campaign_slug: str, session_slug: str) -> None:
             typer.echo(f"artifact[{artifact.kind}]={artifact.path}")
 
 
+@app.command()
+def list_entities(campaign_slug: str) -> None:
+    """List canonical entities for a campaign."""
+    from dnd_summary.db import get_session
+    from dnd_summary.models import Campaign, Entity
+
+    with get_session() as session:
+        campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
+        if not campaign:
+            raise SystemExit("Campaign not found.")
+        entities = (
+            session.query(Entity)
+            .filter_by(campaign_id=campaign.id)
+            .order_by(Entity.entity_type.asc(), Entity.canonical_name.asc())
+            .all()
+        )
+        for entity in entities:
+            typer.echo(f"{entity.entity_type}\t{entity.canonical_name}")
+
+
 if __name__ == "__main__":
     app()

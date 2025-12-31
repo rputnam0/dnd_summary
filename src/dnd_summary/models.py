@@ -222,6 +222,17 @@ class Entity(Base):
     )
 
 
+class EntityAlias(Base):
+    __tablename__ = "entity_aliases"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    entity_id: Mapped[str] = mapped_column(ForeignKey("entities.id"), nullable=False)
+    alias: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("entity_id", "alias", name="uq_entity_alias"),)
+
+
 class EntityMention(Base):
     __tablename__ = "entity_mentions"
 
