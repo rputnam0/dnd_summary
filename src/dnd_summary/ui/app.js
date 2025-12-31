@@ -22,6 +22,7 @@ const elements = {
   runMetrics: document.getElementById("runMetrics"),
   summaryText: document.getElementById("summaryText"),
   qualityMetrics: document.getElementById("qualityMetrics"),
+  runDiagnostics: document.getElementById("runDiagnostics"),
   artifactLinks: document.getElementById("artifactLinks"),
   threadList: document.getElementById("threadList"),
   sceneList: document.getElementById("sceneList"),
@@ -159,6 +160,70 @@ function renderQuality(bundle) {
     row.appendChild(count);
     elements.qualityMetrics.appendChild(row);
   });
+}
+
+function renderDiagnostics(bundle) {
+  clearNode(elements.runDiagnostics);
+  if (!bundle) return;
+  const metrics = bundle.metrics || {};
+  const calls = bundle.llm_calls || [];
+
+  const header = document.createElement("h3");
+  header.textContent = "Run Diagnostics";
+  elements.runDiagnostics.appendChild(header);
+
+  if (Object.keys(metrics).length > 0) {
+    const metricList = document.createElement("div");
+    metricList.className = "diagnostic-grid";
+    Object.entries(metrics).forEach(([key, value]) => {
+      const row = document.createElement("div");
+      row.className = "diagnostic-row";
+      const name = document.createElement("span");
+      name.textContent = key.replace(/_/g, " ");
+      const count = document.createElement("strong");
+      count.textContent = String(value);
+      row.appendChild(name);
+      row.appendChild(count);
+      metricList.appendChild(row);
+    });
+    elements.runDiagnostics.appendChild(metricList);
+  }
+
+  if (calls.length > 0) {
+    const callHeader = document.createElement("h4");
+    callHeader.textContent = "LLM Calls";
+    elements.runDiagnostics.appendChild(callHeader);
+    const list = document.createElement("div");
+    list.className = "diagnostic-list";
+    calls.forEach((call) => {
+      const item = document.createElement("div");
+      item.className = `diagnostic-item ${call.status}`;
+      const title = document.createElement("div");
+      title.className = "diagnostic-title";
+      title.textContent = `${call.kind} • ${call.model}`;
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const latency = call.latency_ms != null ? `${call.latency_ms}ms` : "n/a";
+      meta.textContent = `${call.prompt_id}@${call.prompt_version} • ${latency}`;
+      item.appendChild(title);
+      item.appendChild(meta);
+      if (call.error) {
+        const error = document.createElement("div");
+        error.className = "diagnostic-error";
+        error.textContent = call.error;
+        item.appendChild(error);
+      }
+      list.appendChild(item);
+    });
+    elements.runDiagnostics.appendChild(list);
+  }
+
+  if (Object.keys(metrics).length === 0 && calls.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "meta";
+    empty.textContent = "No diagnostics available for this run.";
+    elements.runDiagnostics.appendChild(empty);
+  }
 }
 
 function renderArtifacts(artifacts) {
@@ -575,6 +640,7 @@ function renderBundle(bundle) {
   renderMetrics(bundle);
   renderParagraphs(bundle.summary, bundle.run_status);
   renderQuality(bundle);
+  renderDiagnostics(bundle);
   renderArtifacts(bundle.artifacts || []);
   renderThreads(bundle.threads || []);
   renderScenes(bundle.scenes || []);

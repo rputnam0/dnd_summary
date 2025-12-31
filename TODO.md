@@ -32,6 +32,7 @@
 - Run status updates (completed/failed) + API prefers completed runs
 - LLM retry/backoff for 429/5xx errors
 - Partial run status for summary failures + UI messaging
+- Run diagnostics panel (metrics + LLM calls)
 
 ## Mid-term
 - Add correction loop (rename/merge entities, mark false positives, lock canonical names).  

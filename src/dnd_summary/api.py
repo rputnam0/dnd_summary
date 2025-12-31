@@ -28,6 +28,7 @@ from dnd_summary.models import (
     ThreadUpdate,
     EntityMention,
     Mention,
+    LLMCall,
     Utterance,
 )
 from dnd_summary.schema_genai import semantic_search_schema
@@ -1192,6 +1193,12 @@ def get_summary(
             .order_by(SessionExtraction.created_at.desc())
             .first()
         )
+        llm_calls = (
+            session.query(LLMCall)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
+            .order_by(LLMCall.created_at.asc(), LLMCall.id.asc())
+            .all()
+        )
         if not summary:
             raise HTTPException(status_code=404, detail="Summary not found")
         return {"text": summary.payload.get("text", "")}
@@ -1423,6 +1430,20 @@ def get_session_bundle(
             "summary": summary.payload.get("text", "") if summary else "",
             "metrics": persist_metrics.payload if persist_metrics else None,
             "quality": quality_report.payload if quality_report else None,
+            "llm_calls": [
+                {
+                    "id": call.id,
+                    "kind": call.kind,
+                    "status": call.status,
+                    "latency_ms": call.latency_ms,
+                    "prompt_id": call.prompt_id,
+                    "prompt_version": call.prompt_version,
+                    "model": call.model,
+                    "error": call.error,
+                    "created_at": call.created_at.isoformat(),
+                }
+                for call in llm_calls
+            ],
             "artifacts": [
                 {
                     "id": a.id,

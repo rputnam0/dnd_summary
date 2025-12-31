@@ -375,6 +375,75 @@ button:hover {
   font-weight: 600;
 }
 
+.diagnostics {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(207, 174, 88, 0.2);
+  background: rgba(10, 12, 16, 0.6);
+}
+
+.diagnostics h3 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+  color: var(--gold-soft);
+}
+
+.diagnostics h4 {
+  margin: 12px 0 8px;
+  font-size: 0.85rem;
+  color: var(--ink);
+}
+
+.diagnostic-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px 12px;
+}
+
+.diagnostic-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+}
+
+.diagnostic-row strong {
+  color: var(--ink);
+}
+
+.diagnostic-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diagnostic-item {
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  border: 1px solid rgba(207, 174, 88, 0.2);
+  background: rgba(15, 18, 24, 0.7);
+}
+
+.diagnostic-item.success {
+  border-color: rgba(141, 198, 119, 0.45);
+}
+
+.diagnostic-item.error {
+  border-color: rgba(210, 92, 74, 0.5);
+}
+
+.diagnostic-title {
+  font-size: 0.82rem;
+  color: var(--ink);
+}
+
+.diagnostic-error {
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: #f1b0a1;
+}
+
 .metrics {
   display: flex;
   flex-wrap: wrap;
