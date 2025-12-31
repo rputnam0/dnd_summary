@@ -108,23 +108,44 @@ async def plan_summary_activity(payload: dict) -> dict:
 
         client = LLMClient()
         start = time.monotonic()
-        raw_json = client.generate_json_schema(prompt, schema=summary_plan_schema())
-        latency_ms = int((time.monotonic() - start) * 1000)
-
-        session.add(
-            LLMCall(
-                run_id=run.id,
-                session_id=session_id,
-                kind="summary_plan",
-                model=settings.gemini_model,
-                prompt_id="summary_plan_v1",
-                prompt_version="1",
-                input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
-                output_hash=sha256(raw_json.encode("utf-8")).hexdigest(),
-                latency_ms=latency_ms,
-                created_at=datetime.utcnow(),
+        try:
+            raw_json = client.generate_json_schema(prompt, schema=summary_plan_schema())
+            latency_ms = int((time.monotonic() - start) * 1000)
+            session.add(
+                LLMCall(
+                    run_id=run.id,
+                    session_id=session_id,
+                    kind="summary_plan",
+                    model=settings.gemini_model,
+                    prompt_id="summary_plan_v1",
+                    prompt_version="1",
+                    input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
+                    output_hash=sha256(raw_json.encode("utf-8")).hexdigest(),
+                    latency_ms=latency_ms,
+                    status="success",
+                    created_at=datetime.utcnow(),
+                )
             )
-        )
+        except Exception as exc:
+            latency_ms = int((time.monotonic() - start) * 1000)
+            session.add(
+                LLMCall(
+                    run_id=run.id,
+                    session_id=session_id,
+                    kind="summary_plan",
+                    model=settings.gemini_model,
+                    prompt_id="summary_plan_v1",
+                    prompt_version="1",
+                    input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
+                    output_hash=sha256(b"").hexdigest(),
+                    latency_ms=latency_ms,
+                    status="error",
+                    error=str(exc)[:2000],
+                    created_at=datetime.utcnow(),
+                )
+            )
+            session.commit()
+            raise
         plan_payload = json.loads(raw_json)
         plan = SummaryPlan.model_validate(plan_payload)
 
@@ -200,23 +221,44 @@ async def write_summary_activity(payload: dict) -> dict:
 
         client = LLMClient()
         start = time.monotonic()
-        summary_text = client.generate_text(prompt)
-        latency_ms = int((time.monotonic() - start) * 1000)
-
-        session.add(
-            LLMCall(
-                run_id=run.id,
-                session_id=session_id,
-                kind="summary_text",
-                model=settings.gemini_model,
-                prompt_id="write_summary_v1",
-                prompt_version="1",
-                input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
-                output_hash=sha256(summary_text.encode("utf-8")).hexdigest(),
-                latency_ms=latency_ms,
-                created_at=datetime.utcnow(),
+        try:
+            summary_text = client.generate_text(prompt)
+            latency_ms = int((time.monotonic() - start) * 1000)
+            session.add(
+                LLMCall(
+                    run_id=run.id,
+                    session_id=session_id,
+                    kind="summary_text",
+                    model=settings.gemini_model,
+                    prompt_id="write_summary_v1",
+                    prompt_version="1",
+                    input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
+                    output_hash=sha256(summary_text.encode("utf-8")).hexdigest(),
+                    latency_ms=latency_ms,
+                    status="success",
+                    created_at=datetime.utcnow(),
+                )
             )
-        )
+        except Exception as exc:
+            latency_ms = int((time.monotonic() - start) * 1000)
+            session.add(
+                LLMCall(
+                    run_id=run.id,
+                    session_id=session_id,
+                    kind="summary_text",
+                    model=settings.gemini_model,
+                    prompt_id="write_summary_v1",
+                    prompt_version="1",
+                    input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
+                    output_hash=sha256(b"").hexdigest(),
+                    latency_ms=latency_ms,
+                    status="error",
+                    error=str(exc)[:2000],
+                    created_at=datetime.utcnow(),
+                )
+            )
+            session.commit()
+            raise
         _validate_summary_quotes(summary_text, list(quote_lookup.values()))
 
         summary_record = SessionExtraction(

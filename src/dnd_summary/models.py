@@ -136,6 +136,8 @@ class LLMCall(Base):
     input_hash: Mapped[str] = mapped_column(String, nullable=False)
     output_hash: Mapped[str] = mapped_column(String, nullable=False)
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="success")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
