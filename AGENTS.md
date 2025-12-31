@@ -45,4 +45,4 @@ Dependency management:
 - Store credentials via environment variables (see `src/dnd_summary/config.py`).
 - Treat transcripts and derived outputs as sensitive campaign data.
 - Explicit transcript caching is enabled by default; caches are released after each run unless disabled via config.
-- For local prompt testing, set `DND_CACHE_RELEASE_ON_COMPLETE=false` and clear caches when finished.
+- For local prompt testing/optimization, temporarily set `DND_CACHE_RELEASE_ON_COMPLETE=false` and/or `DND_CACHE_RELEASE_ON_PARTIAL=false` and set a short TTL like `DND_CACHE_TTL_SECONDS=600`; clear caches when finished.
