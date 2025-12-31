@@ -235,6 +235,34 @@ button:hover {
   font-size: 0.8rem;
 }
 
+.session-status {
+  display: inline-flex;
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid rgba(207, 174, 88, 0.3);
+  color: var(--gold);
+}
+
+.session-status.completed {
+  border-color: rgba(141, 198, 119, 0.6);
+  color: #c7f0b1;
+}
+
+.session-status.failed {
+  border-color: rgba(210, 92, 74, 0.7);
+  color: #f4a18c;
+}
+
+.session-status.running {
+  border-color: rgba(88, 151, 207, 0.7);
+  color: #a9d4ff;
+}
+
 .content {
   display: flex;
   flex-direction: column;

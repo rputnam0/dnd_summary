@@ -518,6 +518,12 @@ function renderSessions() {
     meta.textContent = session.title || "";
     card.appendChild(title);
     card.appendChild(meta);
+    if (session.latest_run_status) {
+      const status = document.createElement("span");
+      status.className = `session-status ${session.latest_run_status}`;
+      status.textContent = session.latest_run_status;
+      card.appendChild(status);
+    }
     card.addEventListener("click", () => loadSession(session.id));
     elements.sessionList.appendChild(card);
   });

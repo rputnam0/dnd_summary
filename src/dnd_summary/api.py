@@ -89,16 +89,29 @@ def list_sessions(campaign_slug: str) -> list[dict]:
             .order_by(Session.session_number.asc().nulls_last(), Session.slug.asc())
             .all()
         )
-        return [
-            {
-                "id": s.id,
-                "slug": s.slug,
-                "session_number": s.session_number,
-                "title": s.title,
-                "occurred_at": s.occurred_at.isoformat() if s.occurred_at else None,
-            }
-            for s in sessions
-        ]
+        payload = []
+        for s in sessions:
+            latest_run = (
+                session.query(Run)
+                .filter_by(session_id=s.id)
+                .order_by(Run.created_at.desc())
+                .first()
+            )
+            payload.append(
+                {
+                    "id": s.id,
+                    "slug": s.slug,
+                    "session_number": s.session_number,
+                    "title": s.title,
+                    "occurred_at": s.occurred_at.isoformat() if s.occurred_at else None,
+                    "latest_run_id": latest_run.id if latest_run else None,
+                    "latest_run_status": latest_run.status if latest_run else None,
+                    "latest_run_created_at": (
+                        latest_run.created_at.isoformat() if latest_run else None
+                    ),
+                }
+            )
+        return payload
 
 
 @app.get("/campaigns/{campaign_slug}/entities")
