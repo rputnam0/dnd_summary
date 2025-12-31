@@ -17,9 +17,13 @@ Rules:
 - Prefer fewer, higher-impact quotes.
 - Use character names for PCs (never player names); see the character map below.
 - Use only utterance_id values that appear below.
+- Only choose utterance IDs that appear in the Quote Bank.
 
 Session facts (JSON):
 {session_facts}
+
+Quote Bank (utterance_id ::: exact quote text):
+{quote_bank}
 
 Character Map (participant -> character, JSON):
 {character_map}

@@ -13,7 +13,7 @@ from dnd_summary.config import settings
 from dnd_summary.db import ENGINE, get_session
 from dnd_summary.llm import LLMClient
 from dnd_summary.mappings import load_character_map
-from dnd_summary.models import Artifact, Base, LLMCall, Run, SessionExtraction, Utterance
+from dnd_summary.models import Artifact, Base, LLMCall, Quote, Run, SessionExtraction, Utterance
 from dnd_summary.render import render_summary_docx
 from dnd_summary.schema_genai import summary_plan_schema
 from dnd_summary.schemas import SessionFacts, SummaryPlan
@@ -34,19 +34,68 @@ def _format_transcript(utterances: list[Utterance], character_map: dict[str, str
     return "\n".join(lines)
 
 
-def _quote_bank(utterances: list[Utterance], quote_ids: list[str]) -> str:
+def _quote_text(utterance: str, quote: Quote) -> str:
+    if quote.char_start is None or quote.char_end is None:
+        return utterance.strip()
+    return utterance[quote.char_start : quote.char_end].strip()
+
+
+def _select_best_quote(quotes: list[Quote]) -> Quote:
+    with_spans = [quote for quote in quotes if quote.char_start is not None and quote.char_end]
+    if with_spans:
+        return max(with_spans, key=lambda q: (q.char_end - q.char_start))
+    return quotes[0]
+
+
+def _quote_bank(
+    utterances: list[Utterance],
+    quotes: list[Quote],
+    quote_ids: list[str] | None = None,
+) -> str:
     lookup = {utt.id: utt.text for utt in utterances}
+    grouped: dict[str, list[Quote]] = {}
+    for quote in quotes:
+        grouped.setdefault(quote.utterance_id, []).append(quote)
+
+    target_ids = quote_ids or list(grouped.keys())
     lines = []
-    for qid in quote_ids:
-        text = lookup.get(qid)
+    for qid in target_ids:
+        entries = grouped.get(qid)
+        if not entries:
+            continue
+        utterance_text = lookup.get(qid, "")
+        if not utterance_text:
+            continue
+        quote = _select_best_quote(entries)
+        text = _quote_text(utterance_text, quote)
         if text:
             lines.append(f"{qid} ::: {text}")
     return "\n".join(lines)
 
 
-def _build_quote_lookup(utterances: list[Utterance], quote_ids: list[str]) -> dict[str, str]:
+def _build_quote_lookup(
+    utterances: list[Utterance],
+    quotes: list[Quote],
+    quote_ids: list[str],
+) -> dict[str, str]:
     lookup = {utt.id: utt.text for utt in utterances}
-    return {qid: lookup[qid] for qid in quote_ids if qid in lookup}
+    grouped: dict[str, list[Quote]] = {}
+    for quote in quotes:
+        grouped.setdefault(quote.utterance_id, []).append(quote)
+
+    quote_lookup: dict[str, str] = {}
+    for qid in quote_ids:
+        entries = grouped.get(qid)
+        if not entries:
+            continue
+        utterance_text = lookup.get(qid, "")
+        if not utterance_text:
+            continue
+        quote = _select_best_quote(entries)
+        text = _quote_text(utterance_text, quote)
+        if text:
+            quote_lookup[qid] = text
+    return quote_lookup
 
 
 def _validate_summary_quotes(summary_text: str, quote_texts: list[str]) -> None:
@@ -97,11 +146,18 @@ async def plan_summary_activity(payload: dict) -> dict:
             .order_by(Utterance.start_ms.asc(), Utterance.id.asc())
             .all()
         )
+        quotes = (
+            session.query(Quote)
+            .filter_by(session_id=session_id, run_id=run_id)
+            .all()
+        )
 
         character_map = load_character_map(session, run.campaign_id)
         transcript_text = _format_transcript(utterances, character_map)
+        quote_bank = _quote_bank(utterances, quotes)
         prompt = _load_prompt("summary_plan_v1.txt").format(
             session_facts=json.dumps(facts.model_dump(mode="json")),
+            quote_bank=quote_bank or "[none]",
             character_map=json.dumps(character_map, sort_keys=True),
             transcript=transcript_text,
         )
@@ -200,6 +256,11 @@ async def write_summary_activity(payload: dict) -> dict:
             .order_by(Utterance.start_ms.asc(), Utterance.id.asc())
             .all()
         )
+        quotes = (
+            session.query(Quote)
+            .filter_by(session_id=session_id, run_id=run_id)
+            .all()
+        )
         character_map = load_character_map(session, run.campaign_id)
         transcript_text = _format_transcript(utterances, character_map)
 
@@ -208,8 +269,8 @@ async def write_summary_activity(payload: dict) -> dict:
             for qid in beat.quote_utterance_ids:
                 if qid not in quote_ids:
                     quote_ids.append(qid)
-        quote_bank = _quote_bank(utterances, quote_ids)
-        quote_lookup = _build_quote_lookup(utterances, quote_ids)
+        quote_bank = _quote_bank(utterances, quotes, quote_ids)
+        quote_lookup = _build_quote_lookup(utterances, quotes, quote_ids)
 
         prompt = _load_prompt("write_summary_v1.txt").format(
             summary_plan=json.dumps(plan.model_dump(mode="json")),

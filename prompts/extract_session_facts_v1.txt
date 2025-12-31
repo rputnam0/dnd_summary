@@ -68,6 +68,8 @@ Rules:
 - Use ONLY utterance_id values that appear in the transcript below.
 - char_start/char_end must be offsets into the referenced utterance text.
 - Use related_event_indexes to point to the relevant item(s) in the events list (0-based).
+- Quotes must isolate the in-character line only (exclude narration like "she goes", "he says", "they say").
+- If a quote is messy or garbled, skip it instead of inventing edits.
 - If you are unsure, lower confidence instead of inventing facts.
 - Prefer completeness over brevity; include NPCs, locations, items, factions, relationships, money, and combat outcomes.
 

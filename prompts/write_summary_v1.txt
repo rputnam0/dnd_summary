@@ -7,6 +7,7 @@ Requirements:
 - Do NOT include utterance IDs or the delimiter; copy ONLY the quote text.
 - Write 600–1200 words unless the session is unusually short.
 - Use character names for PCs (never player names); see the character map below.
+- Quotes should read as the character speaking; avoid narration like "she goes".
 
 Summary plan (JSON):
 {summary_plan}
