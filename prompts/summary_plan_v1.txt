@@ -15,10 +15,14 @@ Rules:
 - The beats must be chronological and cover the entire session.
 - Use quote_utterance_ids only if the utterance contains a strong in-character line or notable humor.
 - Prefer fewer, higher-impact quotes.
+- Use character names for PCs (never player names); see the character map below.
 - Use only utterance_id values that appear below.
 
 Session facts (JSON):
 {session_facts}
+
+Character Map (participant -> character, JSON):
+{character_map}
 
 Transcript (each line includes the utterance_id):
 {transcript}

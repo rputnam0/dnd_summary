@@ -19,3 +19,32 @@ Prefer these names so the worker can discover inputs deterministically:
 - `transcript.srt`
 
 If you have multiple variants, place non-canonical versions in `extras/`.
+
+## Campaign configuration (optional)
+Define participants and PC character mappings in:
+`transcripts/campaigns/<campaign_slug>/campaign.json`
+
+Example:
+```
+{
+  "name": "Avarias",
+  "system": "5e",
+  "participants": [
+    {
+      "display_name": "Jonathan",
+      "role": "dm",
+      "speaker_aliases": ["DM", "Dungeon Master"]
+    },
+    {
+      "display_name": "Alice",
+      "role": "player",
+      "speaker_aliases": ["Alice (Track 1)"],
+      "character": {
+        "name": "Thorne",
+        "kind": "pc",
+        "aliases": ["Thorn"]
+      }
+    }
+  ]
+}
+```

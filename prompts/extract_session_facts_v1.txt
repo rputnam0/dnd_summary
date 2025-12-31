@@ -62,10 +62,15 @@ Return ONLY valid JSON matching this schema:
 }}
 
 Rules:
+- Use character names (in-world), not player names, when referring to PCs.
+- Prefer the character map below when naming PCs or speakers.
 - Use ONLY utterance_id values that appear in the transcript below.
 - char_start/char_end must be offsets into the referenced utterance text.
 - If you are unsure, lower confidence instead of inventing facts.
 - Prefer completeness over brevity; include NPCs, locations, items, factions, relationships, money, and combat outcomes.
+
+Character Map (participant -> character, JSON):
+{character_map}
 
 Transcript (each line includes the utterance_id):
 {transcript}

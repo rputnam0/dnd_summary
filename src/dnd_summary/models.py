@@ -66,6 +66,19 @@ class Participant(Base):
     __table_args__ = (UniqueConstraint("campaign_id", "display_name", name="uq_participant_campaign_name"),)
 
 
+class ParticipantCharacter(Base):
+    __tablename__ = "participant_characters"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    participant_id: Mapped[str] = mapped_column(ForeignKey("participants.id"), nullable=False)
+    entity_id: Mapped[str] = mapped_column(ForeignKey("entities.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("participant_id", "entity_id", name="uq_participant_character"),
+    )
+
+
 class Run(Base):
     __tablename__ = "runs"
 

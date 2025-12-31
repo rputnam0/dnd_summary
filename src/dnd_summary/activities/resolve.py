@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from temporalio import activity
+from sqlalchemy import func
 
 from dnd_summary.db import ENGINE, get_session
 from dnd_summary.models import Base, Entity, EntityAlias, EntityMention, Mention, Run
@@ -31,17 +32,17 @@ async def resolve_entities_activity(payload: dict) -> dict:
             key = _normalize_key(mention.text)
             entity = (
                 session.query(Entity)
-                .filter_by(
-                    campaign_id=run.campaign_id,
-                    entity_type=mention.entity_type,
-                    canonical_name=key,
+                .filter(
+                    Entity.campaign_id == run.campaign_id,
+                    Entity.entity_type == mention.entity_type,
+                    func.lower(Entity.canonical_name) == key,
                 )
                 .one_or_none()
             )
             if not entity:
                 entity = Entity(
                     campaign_id=run.campaign_id,
-                    canonical_name=key,
+                    canonical_name=mention.text.strip() or key,
                     entity_type=mention.entity_type,
                     description=mention.description,
                 )
@@ -49,7 +50,7 @@ async def resolve_entities_activity(payload: dict) -> dict:
                 session.flush()
                 created += 1
 
-            if mention.text.strip() and mention.text.strip().lower() != entity.canonical_name:
+            if mention.text.strip() and mention.text.strip().lower() != entity.canonical_name.lower():
                 alias = (
                     session.query(EntityAlias)
                     .filter_by(entity_id=entity.id, alias=mention.text.strip())

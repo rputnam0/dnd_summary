@@ -42,3 +42,7 @@ Canonical ingestion source lives under `transcripts/` (multi-campaign):
 - `transcripts/campaigns/<campaign_slug>/sessions/<session_slug>/...`
 
 The pipeline will prefer `.jsonl` transcripts when present, falling back to `.txt`.
+
+Optional campaign config lives at:
+`transcripts/campaigns/<campaign_slug>/campaign.json`
+Use this to map speakers to participants and PCs to character names.

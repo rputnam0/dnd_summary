@@ -6,6 +6,7 @@ Requirements:
 - If you include quotes, they MUST be copied verbatim from the Quote Bank below.
 - Do NOT include utterance IDs or the delimiter; copy ONLY the quote text.
 - Write 600–1200 words unless the session is unusually short.
+- Use character names for PCs (never player names); see the character map below.
 
 Summary plan (JSON):
 {summary_plan}
@@ -15,6 +16,9 @@ Session facts (JSON):
 
 Quote Bank (utterance_id ::: exact text):
 {quote_bank}
+
+Character Map (participant -> character, JSON):
+{character_map}
 
 Transcript (each line includes the utterance_id, use only for grounding):
 {transcript}

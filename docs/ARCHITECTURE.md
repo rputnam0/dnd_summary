@@ -18,6 +18,9 @@ Canonical transcript artifact names (preferred):
 
 Variant artifacts may exist under `extras/`.
 
+Optional campaign metadata:
+- `campaign.json` holds participant definitions and PC character mappings.
+
 ## Core domain separation
 - **Player/Participant** (real-world voice track) is stored separately from **Character** (in-world).
 - Summaries and UI should reference **Character** entities, not players.

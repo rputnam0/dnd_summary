@@ -10,6 +10,7 @@ from temporalio import activity
 from dnd_summary.config import settings
 from dnd_summary.db import ENGINE, get_session
 from dnd_summary.llm import LLMClient
+from dnd_summary.mappings import load_character_map
 from dnd_summary.models import Artifact, Base, Run, SessionExtraction, Utterance
 from dnd_summary.render import render_summary_docx
 from dnd_summary.schema_genai import summary_plan_schema
@@ -21,11 +22,12 @@ def _load_prompt(prompt_name: str) -> str:
     return prompt_path.read_text(encoding="utf-8")
 
 
-def _format_transcript(utterances: list[Utterance]) -> str:
+def _format_transcript(utterances: list[Utterance], character_map: dict[str, str]) -> str:
     lines = []
     for utt in utterances:
+        speaker = character_map.get(utt.participant.display_name, utt.participant.display_name)
         lines.append(
-            f"[{utt.id}] {utt.participant.display_name} {utt.start_ms}-{utt.end_ms} {utt.text}"
+            f"[{utt.id}] {speaker} {utt.start_ms}-{utt.end_ms} {utt.text}"
         )
     return "\n".join(lines)
 
@@ -94,9 +96,11 @@ async def plan_summary_activity(payload: dict) -> dict:
             .all()
         )
 
-        transcript_text = _format_transcript(utterances)
+        character_map = load_character_map(session, run.campaign_id)
+        transcript_text = _format_transcript(utterances, character_map)
         prompt = _load_prompt("summary_plan_v1.txt").format(
             session_facts=json.dumps(facts.model_dump(mode="json")),
+            character_map=json.dumps(character_map, sort_keys=True),
             transcript=transcript_text,
         )
 
@@ -156,7 +160,8 @@ async def write_summary_activity(payload: dict) -> dict:
             .order_by(Utterance.start_ms.asc(), Utterance.id.asc())
             .all()
         )
-        transcript_text = _format_transcript(utterances)
+        character_map = load_character_map(session, run.campaign_id)
+        transcript_text = _format_transcript(utterances, character_map)
 
         quote_ids: list[str] = []
         for beat in plan.beats:
@@ -170,6 +175,7 @@ async def write_summary_activity(payload: dict) -> dict:
             summary_plan=json.dumps(plan.model_dump(mode="json")),
             session_facts=json.dumps(facts.model_dump(mode="json")),
             quote_bank=quote_bank or "[none]",
+            character_map=json.dumps(character_map, sort_keys=True),
             transcript=transcript_text,
         )
 

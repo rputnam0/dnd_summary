@@ -9,6 +9,7 @@ from temporalio import activity
 from dnd_summary.config import settings
 from dnd_summary.db import ENGINE, get_session
 from dnd_summary.llm import LLMClient
+from dnd_summary.mappings import load_character_map
 from dnd_summary.models import Base, Run, SessionExtraction, Utterance
 from dnd_summary.schema_genai import session_facts_schema
 from dnd_summary.schemas import SessionFacts
@@ -19,11 +20,12 @@ def _load_prompt(prompt_name: str) -> str:
     return prompt_path.read_text(encoding="utf-8")
 
 
-def _format_transcript(utterances: list[Utterance]) -> str:
+def _format_transcript(utterances: list[Utterance], character_map: dict[str, str]) -> str:
     lines = []
     for utt in utterances:
+        speaker = character_map.get(utt.participant.display_name, utt.participant.display_name)
         lines.append(
-            f"[{utt.id}] {utt.participant.display_name} {utt.start_ms}-{utt.end_ms} {utt.text}"
+            f"[{utt.id}] {speaker} {utt.start_ms}-{utt.end_ms} {utt.text}"
         )
     return "\n".join(lines)
 
@@ -46,10 +48,14 @@ async def extract_session_facts_activity(payload: dict) -> dict:
         if not utterances:
             raise ValueError(f"No utterances found for session {session_id}")
 
-        transcript_text = _format_transcript(utterances)
+        character_map = load_character_map(session, run.campaign_id)
+        transcript_text = _format_transcript(utterances, character_map)
 
         prompt_template = _load_prompt("extract_session_facts_v1.txt")
-        prompt = prompt_template.format(transcript=transcript_text)
+        prompt = prompt_template.format(
+            transcript=transcript_text,
+            character_map=json.dumps(character_map, sort_keys=True),
+        )
 
         client = LLMClient()
         raw_json = client.generate_json_schema(prompt, schema=session_facts_schema())
