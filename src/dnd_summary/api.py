@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
+from sqlalchemy import func, or_, text
 
 from dnd_summary.db import get_session
 from dnd_summary.models import (
@@ -14,6 +15,9 @@ from dnd_summary.models import (
     SessionExtraction,
     Thread,
     ThreadUpdate,
+    EntityMention,
+    Mention,
+    Utterance,
 )
 
 
@@ -79,6 +83,55 @@ def list_entities(campaign_slug: str) -> list[dict]:
         ]
 
 
+@app.get("/sessions/{session_id}/entities")
+def list_session_entities(session_id: str) -> list[dict]:
+    with get_session() as session:
+        entities = (
+            session.query(Entity)
+            .join(EntityMention, EntityMention.entity_id == Entity.id)
+            .filter(EntityMention.session_id == session_id)
+            .order_by(Entity.entity_type.asc(), Entity.canonical_name.asc())
+            .distinct()
+            .all()
+        )
+        return [
+            {
+                "id": e.id,
+                "name": e.canonical_name,
+                "type": e.entity_type,
+                "description": e.description,
+            }
+            for e in entities
+        ]
+
+
+@app.get("/sessions/{session_id}/mentions")
+def list_mentions(session_id: str) -> list[dict]:
+    with get_session() as session:
+        mentions = (
+            session.query(Mention, Entity)
+            .outerjoin(EntityMention, EntityMention.mention_id == Mention.id)
+            .outerjoin(Entity, Entity.id == EntityMention.entity_id)
+            .filter(Mention.session_id == session_id)
+            .order_by(Mention.created_at.asc(), Mention.id.asc())
+            .all()
+        )
+        return [
+            {
+                "id": mention.id,
+                "text": mention.text,
+                "entity_type": mention.entity_type,
+                "description": mention.description,
+                "evidence": mention.evidence,
+                "confidence": mention.confidence,
+                "entity_id": entity.id if entity else None,
+                "entity_name": entity.canonical_name if entity else None,
+                "entity_type_resolved": entity.entity_type if entity else None,
+            }
+            for mention, entity in mentions
+        ]
+
+
 @app.get("/sessions/{session_id}/quotes")
 def list_quotes(session_id: str) -> list[dict]:
     with get_session() as session:
@@ -94,6 +147,96 @@ def list_quotes(session_id: str) -> list[dict]:
             }
             for q in quotes
         ]
+
+
+@app.get("/campaigns/{campaign_slug}/search")
+def search_campaign(
+    campaign_slug: str,
+    q: str = Query(..., min_length=2),
+) -> dict:
+    with get_session() as session:
+        campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+
+        dialect = session.bind.dialect.name if session.bind else "unknown"
+        if dialect == "postgresql":
+            mentions = (
+                session.query(Mention)
+                .join(Session, Session.id == Mention.session_id)
+                .filter(Session.campaign_id == campaign.id)
+                .filter(
+                    text(
+                        "to_tsvector('english', mentions.text || ' ' || "
+                        "coalesce(mentions.description, '')) @@ plainto_tsquery(:q)"
+                    )
+                )
+                .params(q=q)
+                .limit(50)
+                .all()
+            )
+            utterances = (
+                session.query(Utterance)
+                .join(Session, Session.id == Utterance.session_id)
+                .filter(Session.campaign_id == campaign.id)
+                .filter(
+                    text(
+                        "to_tsvector('english', utterances.text) "
+                        "@@ plainto_tsquery(:q)"
+                    )
+                )
+                .params(q=q)
+                .limit(50)
+                .all()
+            )
+        else:
+            like = f"%{q.lower()}%"
+            mentions = (
+                session.query(Mention)
+                .join(Session, Session.id == Mention.session_id)
+                .filter(Session.campaign_id == campaign.id)
+                .filter(
+                    or_(
+                        func.lower(Mention.text).like(like),
+                        func.lower(func.coalesce(Mention.description, "")).like(like),
+                    )
+                )
+                .limit(50)
+                .all()
+            )
+            utterances = (
+                session.query(Utterance)
+                .join(Session, Session.id == Utterance.session_id)
+                .filter(Session.campaign_id == campaign.id)
+                .filter(func.lower(Utterance.text).like(like))
+                .limit(50)
+                .all()
+            )
+
+        return {
+            "mentions": [
+                {
+                    "id": m.id,
+                    "session_id": m.session_id,
+                    "text": m.text,
+                    "entity_type": m.entity_type,
+                    "description": m.description,
+                    "evidence": m.evidence,
+                }
+                for m in mentions
+            ],
+            "utterances": [
+                {
+                    "id": u.id,
+                    "session_id": u.session_id,
+                    "participant_id": u.participant_id,
+                    "start_ms": u.start_ms,
+                    "end_ms": u.end_ms,
+                    "text": u.text,
+                }
+                for u in utterances
+            ],
+        }
 
 
 @app.get("/sessions/{session_id}/scenes")

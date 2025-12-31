@@ -50,3 +50,8 @@ Use this to map speakers to participants and PCs to character names.
 ## Quick local run (no Temporal)
 If Docker/Temporal is not running, you can execute the pipeline in-process:
 - `uv run dnd-summary run-session-local avarias session_54`
+
+## DSPy evals
+Evaluate prompt quality with the NPC extraction harness:
+- `uv pip install -e ".[eval]"`
+- `uv run python scripts/run_dspy_eval.py --dataset evals/npc_eval_template.jsonl`
