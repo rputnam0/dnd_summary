@@ -22,5 +22,4 @@ Quote Bank (utterance_id ::: exact text):
 Character Map (participant -> character, JSON):
 {character_map}
 
-Transcript (each line includes the utterance_id, use only for grounding):
-{transcript}
+{transcript_block}

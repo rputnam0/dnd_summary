@@ -12,6 +12,7 @@ from temporalio import activity
 from dnd_summary.config import settings
 from dnd_summary.db import ENGINE, get_session
 from dnd_summary.llm import LLMClient
+from dnd_summary.llm_cache import ensure_transcript_cache, record_llm_usage
 from dnd_summary.mappings import load_character_map
 from dnd_summary.models import Base, LLMCall, Run, SessionExtraction, Utterance
 from dnd_summary.schema_genai import events_schema, quotes_schema, session_facts_schema
@@ -140,6 +141,9 @@ async def extract_session_facts_activity(payload: dict) -> dict:
 
         character_map = load_character_map(session, run.campaign_id)
         transcript_text = _format_transcript(utterances, character_map)
+        cache_name, transcript_block = ensure_transcript_cache(
+            session, run, transcript_text
+        )
 
         prompt_template = _load_prompt("extract_session_facts_v1.txt")
         speakers = sorted(
@@ -149,15 +153,20 @@ async def extract_session_facts_activity(payload: dict) -> dict:
             }
         )
         prompt = prompt_template.format(
-            transcript=transcript_text,
             character_map=json.dumps(character_map, sort_keys=True),
             speakers=json.dumps(speakers, sort_keys=True),
+            transcript_block=transcript_block,
         )
 
         client = LLMClient()
         start = time.monotonic()
         try:
-            raw_json = client.generate_json_schema(prompt, schema=session_facts_schema())
+            raw_json, usage = client.generate_json_schema(
+                prompt,
+                schema=session_facts_schema(),
+                cached_content=cache_name,
+                return_usage=True,
+            )
             latency_ms = int((time.monotonic() - start) * 1000)
             session.add(
                 LLMCall(
@@ -166,13 +175,23 @@ async def extract_session_facts_activity(payload: dict) -> dict:
                     kind="extract_session_facts",
                     model=settings.gemini_model,
                     prompt_id="extract_session_facts_v1",
-                    prompt_version="5",
+                    prompt_version="6",
                     input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
                     output_hash=sha256(raw_json.encode("utf-8")).hexdigest(),
                     latency_ms=latency_ms,
                     status="success",
                     created_at=datetime.utcnow(),
                 )
+            )
+            record_llm_usage(
+                session,
+                run_id=run.id,
+                session_id=session_id,
+                prompt_id="extract_session_facts_v1",
+                prompt_version="6",
+                call_kind="extract_session_facts",
+                usage=usage,
+                cache_name=cache_name,
             )
         except Exception as exc:
             latency_ms = int((time.monotonic() - start) * 1000)
@@ -183,7 +202,7 @@ async def extract_session_facts_activity(payload: dict) -> dict:
                     kind="extract_session_facts",
                     model=settings.gemini_model,
                     prompt_id="extract_session_facts_v1",
-                    prompt_version="5",
+                    prompt_version="6",
                     input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
                     output_hash=sha256(b"").hexdigest(),
                     latency_ms=latency_ms,
@@ -202,15 +221,18 @@ async def extract_session_facts_activity(payload: dict) -> dict:
         if len(facts.quotes) < settings.min_quotes * 2:
             quote_prompt_template = _load_prompt("extract_quotes_v1.txt")
             quote_prompt = quote_prompt_template.format(
-                transcript=transcript_text,
                 character_map=json.dumps(character_map, sort_keys=True),
                 min_quotes=settings.min_quotes,
                 max_quotes=settings.max_quotes,
+                transcript_block=transcript_block,
             )
             start = time.monotonic()
             try:
-                quote_json = client.generate_json_schema(
-                    quote_prompt, schema=quotes_schema()
+                quote_json, usage = client.generate_json_schema(
+                    quote_prompt,
+                    schema=quotes_schema(),
+                    cached_content=cache_name,
+                    return_usage=True,
                 )
                 latency_ms = int((time.monotonic() - start) * 1000)
                 session.add(
@@ -220,13 +242,23 @@ async def extract_session_facts_activity(payload: dict) -> dict:
                         kind="extract_quotes",
                         model=settings.gemini_model,
                         prompt_id="extract_quotes_v1",
-                        prompt_version="3",
+                        prompt_version="4",
                         input_hash=sha256(quote_prompt.encode("utf-8")).hexdigest(),
                         output_hash=sha256(quote_json.encode("utf-8")).hexdigest(),
                         latency_ms=latency_ms,
                         status="success",
                         created_at=datetime.utcnow(),
                     )
+                )
+                record_llm_usage(
+                    session,
+                    run_id=run.id,
+                    session_id=session_id,
+                    prompt_id="extract_quotes_v1",
+                    prompt_version="4",
+                    call_kind="extract_quotes",
+                    usage=usage,
+                    cache_name=cache_name,
                 )
                 quote_payload = json.loads(quote_json)
                 quote_facts = QuoteExtraction.model_validate(quote_payload)
@@ -240,7 +272,7 @@ async def extract_session_facts_activity(payload: dict) -> dict:
                         kind="extract_quotes",
                         model=settings.gemini_model,
                         prompt_id="extract_quotes_v1",
-                        prompt_version="3",
+                        prompt_version="4",
                         input_hash=sha256(quote_prompt.encode("utf-8")).hexdigest(),
                         output_hash=sha256(b"").hexdigest(),
                         latency_ms=latency_ms,
@@ -253,17 +285,20 @@ async def extract_session_facts_activity(payload: dict) -> dict:
         if len(facts.events) < settings.min_events:
             event_prompt_template = _load_prompt("extract_events_v1.txt")
             event_prompt = event_prompt_template.format(
-                transcript=transcript_text,
                 character_map=json.dumps(character_map, sort_keys=True),
                 existing_events=json.dumps(
                     [event.summary for event in facts.events], ensure_ascii=True
                 ),
                 min_events=settings.min_events,
+                transcript_block=transcript_block,
             )
             start = time.monotonic()
             try:
-                event_json = client.generate_json_schema(
-                    event_prompt, schema=events_schema()
+                event_json, usage = client.generate_json_schema(
+                    event_prompt,
+                    schema=events_schema(),
+                    cached_content=cache_name,
+                    return_usage=True,
                 )
                 latency_ms = int((time.monotonic() - start) * 1000)
                 session.add(
@@ -273,13 +308,23 @@ async def extract_session_facts_activity(payload: dict) -> dict:
                         kind="extract_events",
                         model=settings.gemini_model,
                         prompt_id="extract_events_v1",
-                        prompt_version="1",
+                        prompt_version="2",
                         input_hash=sha256(event_prompt.encode("utf-8")).hexdigest(),
                         output_hash=sha256(event_json.encode("utf-8")).hexdigest(),
                         latency_ms=latency_ms,
                         status="success",
                         created_at=datetime.utcnow(),
                     )
+                )
+                record_llm_usage(
+                    session,
+                    run_id=run.id,
+                    session_id=session_id,
+                    prompt_id="extract_events_v1",
+                    prompt_version="2",
+                    call_kind="extract_events",
+                    usage=usage,
+                    cache_name=cache_name,
                 )
                 event_payload = json.loads(event_json)
                 event_facts = EventExtraction.model_validate(event_payload)
@@ -293,7 +338,7 @@ async def extract_session_facts_activity(payload: dict) -> dict:
                         kind="extract_events",
                         model=settings.gemini_model,
                         prompt_id="extract_events_v1",
-                        prompt_version="1",
+                        prompt_version="2",
                         input_hash=sha256(event_prompt.encode("utf-8")).hexdigest(),
                         output_hash=sha256(b"").hexdigest(),
                         latency_ms=latency_ms,
@@ -309,7 +354,7 @@ async def extract_session_facts_activity(payload: dict) -> dict:
             kind="session_facts",
             model=settings.gemini_model,
             prompt_id="extract_session_facts_v1",
-            prompt_version="1",
+            prompt_version="6",
             payload=facts.model_dump(mode="json"),
             created_at=datetime.utcnow(),
         )

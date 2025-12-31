@@ -17,6 +17,8 @@
    - Gate by feature flag to keep costs low.
 
 3) QA follow-up: ensure partial run status displays when summary fails
+4) Validate explicit transcript caching (if enabled)  
+   - Confirm llm_usage includes cached_content_token_count > 0 on repeated runs.
 
 ## Recently completed
 - Entity-centric API endpoints (`/entities/{entity_id}/mentions|quotes|events`)
@@ -33,6 +35,7 @@
 - LLM retry/backoff for 429/5xx errors
 - Partial run status for summary failures + UI messaging
 - Run diagnostics panel (metrics + LLM calls)
+- Explicit transcript cache support + token usage logging
 
 ## Mid-term
 - Add correction loop (rename/merge entities, mark false positives, lock canonical names).  

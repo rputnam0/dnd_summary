@@ -35,7 +35,14 @@ class LLMClient:
                 time.sleep(min(delay + jitter, settings.llm_retry_max_seconds))
                 delay = min(delay * settings.llm_retry_backoff, settings.llm_retry_max_seconds)
 
-    def generate_json(self, prompt: str, *, system: str | None = None) -> str:
+    def generate_json(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        cached_content: str | None = None,
+        return_usage: bool = False,
+    ):
         def _call():
             response = self._client.models.generate_content(
                 model=settings.gemini_model,
@@ -45,13 +52,25 @@ class LLMClient:
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     system_instruction=[system] if system else None,
+                    cached_content=cached_content,
                 ),
             )
-            return response.text or ""
+            return response
 
-        return self._call_with_retry(_call)
+        response = self._call_with_retry(_call)
+        text = response.text or ""
+        if return_usage:
+            return text, getattr(response, "usage_metadata", None)
+        return text
 
-    def generate_text(self, prompt: str, *, system: str | None = None) -> str:
+    def generate_text(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        cached_content: str | None = None,
+        return_usage: bool = False,
+    ):
         def _call():
             response = self._client.models.generate_content(
                 model=settings.gemini_model,
@@ -61,11 +80,16 @@ class LLMClient:
                 config=types.GenerateContentConfig(
                     response_mime_type="text/plain",
                     system_instruction=[system] if system else None,
+                    cached_content=cached_content,
                 ),
             )
-            return response.text or ""
+            return response
 
-        return self._call_with_retry(_call)
+        response = self._call_with_retry(_call)
+        text = response.text or ""
+        if return_usage:
+            return text, getattr(response, "usage_metadata", None)
+        return text
 
     def generate_json_schema(
         self,
@@ -73,7 +97,9 @@ class LLMClient:
         *,
         schema: types.Schema,
         system: str | None = None,
-    ) -> str:
+        cached_content: str | None = None,
+        return_usage: bool = False,
+    ):
         def _call():
             response = self._client.models.generate_content(
                 model=settings.gemini_model,
@@ -84,8 +110,13 @@ class LLMClient:
                     response_mime_type="application/json",
                     response_schema=schema,
                     system_instruction=[system] if system else None,
+                    cached_content=cached_content,
                 ),
             )
-            return response.text or ""
+            return response
 
-        return self._call_with_retry(_call)
+        response = self._call_with_retry(_call)
+        text = response.text or ""
+        if return_usage:
+            return text, getattr(response, "usage_metadata", None)
+        return text

@@ -104,5 +104,4 @@ Character Map (participant -> character, JSON):
 Speakers (unique from transcript):
 {speakers}
 
-Transcript (each line includes the utterance_id):
-{transcript}
+{transcript_block}

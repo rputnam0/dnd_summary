@@ -168,6 +168,7 @@ function renderDiagnostics(bundle) {
   if (!bundle) return;
   const metrics = bundle.metrics || {};
   const calls = bundle.llm_calls || [];
+  const usage = bundle.llm_usage || [];
 
   const header = document.createElement("h3");
   header.textContent = "Run Diagnostics";
@@ -188,6 +189,52 @@ function renderDiagnostics(bundle) {
       metricList.appendChild(row);
     });
     elements.runDiagnostics.appendChild(metricList);
+  }
+
+  if (usage.length > 0) {
+    const usageHeader = document.createElement("h4");
+    usageHeader.textContent = "Token Usage";
+    elements.runDiagnostics.appendChild(usageHeader);
+
+    const totals = usage.reduce(
+      (acc, entry) => {
+        acc.prompt += entry.prompt_token_count || 0;
+        acc.cached += entry.cached_content_token_count || 0;
+        acc.candidates += entry.candidates_token_count || 0;
+        acc.total += entry.total_token_count || 0;
+        return acc;
+      },
+      { prompt: 0, cached: 0, candidates: 0, total: 0 }
+    );
+
+    const totalRow = document.createElement("div");
+    totalRow.className = "diagnostic-row";
+    const totalLabel = document.createElement("span");
+    totalLabel.textContent = "Total tokens";
+    const totalValue = document.createElement("strong");
+    totalValue.textContent = `${totals.total} (cached ${totals.cached})`;
+    totalRow.appendChild(totalLabel);
+    totalRow.appendChild(totalValue);
+    elements.runDiagnostics.appendChild(totalRow);
+
+    const usageList = document.createElement("div");
+    usageList.className = "diagnostic-list";
+    usage.forEach((entry) => {
+      const item = document.createElement("div");
+      item.className = "diagnostic-item";
+      const title = document.createElement("div");
+      title.className = "diagnostic-title";
+      title.textContent = entry.call_kind || "llm_call";
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = `prompt ${entry.prompt_token_count || 0} • cached ${
+        entry.cached_content_token_count || 0
+      } • output ${entry.candidates_token_count || 0}`;
+      item.appendChild(title);
+      item.appendChild(meta);
+      usageList.appendChild(item);
+    });
+    elements.runDiagnostics.appendChild(usageList);
   }
 
   if (calls.length > 0) {
@@ -219,7 +266,7 @@ function renderDiagnostics(bundle) {
     elements.runDiagnostics.appendChild(list);
   }
 
-  if (Object.keys(metrics).length === 0 && calls.length === 0) {
+  if (Object.keys(metrics).length === 0 && calls.length === 0 && usage.length === 0) {
     const empty = document.createElement("p");
     empty.className = "meta";
     empty.textContent = "No diagnostics available for this run.";

@@ -1199,6 +1199,12 @@ def get_summary(
             .order_by(LLMCall.created_at.asc(), LLMCall.id.asc())
             .all()
         )
+        llm_usage = (
+            session.query(SessionExtraction)
+            .filter_by(session_id=session_id, run_id=resolved_run_id, kind="llm_usage")
+            .order_by(SessionExtraction.created_at.asc(), SessionExtraction.id.asc())
+            .all()
+        )
         if not summary:
             raise HTTPException(status_code=404, detail="Summary not found")
         return {"text": summary.payload.get("text", "")}
@@ -1444,6 +1450,7 @@ def get_session_bundle(
                 }
                 for call in llm_calls
             ],
+            "llm_usage": [record.payload for record in llm_usage],
             "artifacts": [
                 {
                     "id": a.id,

@@ -12,6 +12,7 @@ from temporalio import activity
 from dnd_summary.config import settings
 from dnd_summary.db import ENGINE, get_session
 from dnd_summary.llm import LLMClient
+from dnd_summary.llm_cache import ensure_transcript_cache, record_llm_usage
 from dnd_summary.mappings import load_character_map
 from dnd_summary.models import Artifact, Base, LLMCall, Quote, Run, SessionExtraction, Utterance
 from dnd_summary.render import render_summary_docx
@@ -156,18 +157,29 @@ async def plan_summary_activity(payload: dict) -> dict:
 
         character_map = load_character_map(session, run.campaign_id)
         transcript_text = _format_transcript(utterances, character_map)
+        cache_name, transcript_block = ensure_transcript_cache(
+            session, run, transcript_text
+        )
+        cache_name, transcript_block = ensure_transcript_cache(
+            session, run, transcript_text
+        )
         quote_bank = _quote_bank(utterances, quotes)
         prompt = _load_prompt("summary_plan_v1.txt").format(
             session_facts=json.dumps(facts.model_dump(mode="json")),
             quote_bank=quote_bank or "[none]",
             character_map=json.dumps(character_map, sort_keys=True),
-            transcript=transcript_text,
+            transcript_block=transcript_block,
         )
 
         client = LLMClient()
         start = time.monotonic()
         try:
-            raw_json = client.generate_json_schema(prompt, schema=summary_plan_schema())
+            raw_json, usage = client.generate_json_schema(
+                prompt,
+                schema=summary_plan_schema(),
+                cached_content=cache_name,
+                return_usage=True,
+            )
             latency_ms = int((time.monotonic() - start) * 1000)
             session.add(
                 LLMCall(
@@ -176,13 +188,23 @@ async def plan_summary_activity(payload: dict) -> dict:
                     kind="summary_plan",
                     model=settings.gemini_model,
                     prompt_id="summary_plan_v1",
-                    prompt_version="2",
+                    prompt_version="3",
                     input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
                     output_hash=sha256(raw_json.encode("utf-8")).hexdigest(),
                     latency_ms=latency_ms,
                     status="success",
                     created_at=datetime.utcnow(),
                 )
+            )
+            record_llm_usage(
+                session,
+                run_id=run.id,
+                session_id=session_id,
+                prompt_id="summary_plan_v1",
+                prompt_version="3",
+                call_kind="summary_plan",
+                usage=usage,
+                cache_name=cache_name,
             )
         except Exception as exc:
             latency_ms = int((time.monotonic() - start) * 1000)
@@ -193,7 +215,7 @@ async def plan_summary_activity(payload: dict) -> dict:
                     kind="summary_plan",
                     model=settings.gemini_model,
                     prompt_id="summary_plan_v1",
-                    prompt_version="2",
+                    prompt_version="3",
                     input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
                     output_hash=sha256(b"").hexdigest(),
                     latency_ms=latency_ms,
@@ -213,7 +235,7 @@ async def plan_summary_activity(payload: dict) -> dict:
             kind="summary_plan",
             model=settings.gemini_model,
             prompt_id="summary_plan_v1",
-            prompt_version="2",
+            prompt_version="3",
             payload=plan.model_dump(mode="json"),
             created_at=datetime.utcnow(),
         )
@@ -279,13 +301,17 @@ async def write_summary_activity(payload: dict) -> dict:
             session_facts=json.dumps(facts.model_dump(mode="json")),
             quote_bank=quote_bank or "[none]",
             character_map=json.dumps(character_map, sort_keys=True),
-            transcript=transcript_text,
+            transcript_block=transcript_block,
         )
 
         client = LLMClient()
         start = time.monotonic()
         try:
-            summary_text = client.generate_text(prompt)
+            summary_text, usage = client.generate_text(
+                prompt,
+                cached_content=cache_name,
+                return_usage=True,
+            )
             latency_ms = int((time.monotonic() - start) * 1000)
             session.add(
                 LLMCall(
@@ -294,13 +320,23 @@ async def write_summary_activity(payload: dict) -> dict:
                     kind="summary_text",
                     model=settings.gemini_model,
                     prompt_id="write_summary_v1",
-                    prompt_version="1",
+                    prompt_version="2",
                     input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
                     output_hash=sha256(summary_text.encode("utf-8")).hexdigest(),
                     latency_ms=latency_ms,
                     status="success",
                     created_at=datetime.utcnow(),
                 )
+            )
+            record_llm_usage(
+                session,
+                run_id=run.id,
+                session_id=session_id,
+                prompt_id="write_summary_v1",
+                prompt_version="2",
+                call_kind="summary_text",
+                usage=usage,
+                cache_name=cache_name,
             )
         except Exception as exc:
             latency_ms = int((time.monotonic() - start) * 1000)
@@ -311,7 +347,7 @@ async def write_summary_activity(payload: dict) -> dict:
                     kind="summary_text",
                     model=settings.gemini_model,
                     prompt_id="write_summary_v1",
-                    prompt_version="1",
+                    prompt_version="2",
                     input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
                     output_hash=sha256(b"").hexdigest(),
                     latency_ms=latency_ms,
@@ -330,7 +366,7 @@ async def write_summary_activity(payload: dict) -> dict:
             kind="summary_text",
             model=settings.gemini_model,
             prompt_id="write_summary_v1",
-            prompt_version="1",
+            prompt_version="2",
             payload={"text": summary_text},
             created_at=datetime.utcnow(),
         )
