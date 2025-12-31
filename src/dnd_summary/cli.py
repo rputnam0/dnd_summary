@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 import typer
 
@@ -170,6 +171,147 @@ def api(host: str = "127.0.0.1", port: int = 8000) -> None:
     import uvicorn
 
     uvicorn.run("dnd_summary.api:app", host=host, port=port, reload=False)
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = value
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+@app.command()
+def list_caches(
+    campaign_slug: str | None = None,
+    session_slug: str | None = None,
+    include_expired: bool = False,
+    verify_remote: bool = False,
+) -> None:
+    """List transcript caches stored in the database."""
+    from google import genai
+    from google.genai import errors
+
+    from dnd_summary.db import get_session
+    from dnd_summary.models import Campaign, Session, SessionExtraction
+
+    client = None
+    if verify_remote:
+        if not settings.gemini_api_key:
+            raise SystemExit("Missing Gemini API key for cache verification.")
+        client = genai.Client(api_key=settings.gemini_api_key)
+
+    with get_session() as session:
+        query = (
+            session.query(SessionExtraction, Session, Campaign)
+            .join(Session, SessionExtraction.session_id == Session.id)
+            .join(Campaign, Session.campaign_id == Campaign.id)
+            .filter(SessionExtraction.kind == "transcript_cache")
+            .order_by(SessionExtraction.created_at.desc())
+        )
+        if campaign_slug:
+            query = query.filter(Campaign.slug == campaign_slug)
+        if session_slug:
+            query = query.filter(Session.slug == session_slug)
+        rows = query.all()
+        if not rows:
+            typer.echo("No transcript caches found.")
+            return
+        now = datetime.now(timezone.utc)
+        for record, session_obj, campaign in rows:
+            payload = record.payload or {}
+            cache_name = payload.get("cache_name")
+            invalidated = payload.get("invalidated", False)
+            expires_at = _parse_datetime(payload.get("expires_at"))
+            if not include_expired and (invalidated or (expires_at and expires_at <= now)):
+                continue
+            remote_status = None
+            if client and cache_name:
+                try:
+                    client.caches.get(name=cache_name)
+                    remote_status = "ok"
+                except errors.ClientError:
+                    remote_status = "missing"
+                except Exception:
+                    remote_status = "error"
+            status_bits = []
+            if invalidated:
+                status_bits.append("invalidated")
+            if expires_at:
+                status_bits.append(f"expires={expires_at.isoformat()}")
+            if remote_status:
+                status_bits.append(f"remote={remote_status}")
+            status = "; ".join(status_bits) if status_bits else "active"
+            typer.echo(
+                f"{campaign.slug}/{session_obj.slug}\t{record.run_id[:8]}\t{cache_name}\t{status}"
+            )
+
+
+@app.command()
+def clear_caches(
+    campaign_slug: str | None = None,
+    session_slug: str | None = None,
+    all: bool = False,
+    dry_run: bool = False,
+) -> None:
+    """Delete transcript caches and mark them invalidated in the DB."""
+    from google import genai
+
+    from dnd_summary.db import get_session
+    from dnd_summary.models import Campaign, Session, SessionExtraction
+
+    if not all and not campaign_slug and not session_slug:
+        raise SystemExit("Provide --all or filter by campaign/session.")
+    if not dry_run and not settings.gemini_api_key:
+        raise SystemExit("Missing Gemini API key for cache deletion.")
+
+    client = genai.Client(api_key=settings.gemini_api_key) if not dry_run else None
+    now = datetime.now(timezone.utc).isoformat()
+
+    with get_session() as session:
+        query = (
+            session.query(SessionExtraction, Session, Campaign)
+            .join(Session, SessionExtraction.session_id == Session.id)
+            .join(Campaign, Session.campaign_id == Campaign.id)
+            .filter(SessionExtraction.kind == "transcript_cache")
+            .order_by(SessionExtraction.created_at.desc())
+        )
+        if campaign_slug:
+            query = query.filter(Campaign.slug == campaign_slug)
+        if session_slug:
+            query = query.filter(Session.slug == session_slug)
+        rows = query.all()
+        if not rows:
+            typer.echo("No transcript caches found.")
+            return
+
+        for record, session_obj, campaign in rows:
+            payload = record.payload or {}
+            cache_name = payload.get("cache_name")
+            if not cache_name:
+                continue
+            if payload.get("invalidated"):
+                continue
+            result = "dry-run"
+            if client:
+                try:
+                    client.caches.delete(cache_name)
+                    result = "deleted"
+                except Exception as exc:
+                    result = f"error={str(exc)[:120]}"
+            payload["invalidated"] = True
+            payload["invalidated_at"] = now
+            record.payload = payload
+            typer.echo(
+                f"{campaign.slug}/{session_obj.slug}\t{record.run_id[:8]}\t{cache_name}\t{result}"
+            )
 
 
 if __name__ == "__main__":

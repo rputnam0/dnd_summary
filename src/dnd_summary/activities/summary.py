@@ -160,9 +160,6 @@ async def plan_summary_activity(payload: dict) -> dict:
         cache_name, transcript_block = ensure_transcript_cache(
             session, run, transcript_text
         )
-        cache_name, transcript_block = ensure_transcript_cache(
-            session, run, transcript_text
-        )
         quote_bank = _quote_bank(utterances, quotes)
         prompt = _load_prompt("summary_plan_v1.txt").format(
             session_facts=json.dumps(facts.model_dump(mode="json")),
@@ -287,6 +284,9 @@ async def write_summary_activity(payload: dict) -> dict:
         )
         character_map = load_character_map(session, run.campaign_id)
         transcript_text = _format_transcript(utterances, character_map)
+        cache_name, transcript_block = ensure_transcript_cache(
+            session, run, transcript_text
+        )
 
         quote_ids: list[str] = []
         for beat in plan.beats:

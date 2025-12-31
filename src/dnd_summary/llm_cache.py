@@ -60,6 +60,8 @@ def _find_cached_transcript(
     now = datetime.now(timezone.utc)
     for record in candidates:
         payload = record.payload or {}
+        if payload.get("invalidated"):
+            continue
         if payload.get("transcript_hash") != run.transcript_hash:
             continue
         expires_at = _parse_datetime(payload.get("expires_at"))

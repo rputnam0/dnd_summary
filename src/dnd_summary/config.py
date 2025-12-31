@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3-flash"
-    enable_explicit_cache: bool = False
+    enable_explicit_cache: bool = True
     cache_ttl_seconds: int = 3600
     llm_max_retries: int = 3
     llm_retry_min_seconds: float = 1.0
