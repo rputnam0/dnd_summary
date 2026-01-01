@@ -92,7 +92,7 @@ the repo in a working state.
    - `PUT /sessions/{session_id}/current-run` with validation and authorization hooks.
    - Acceptance: UI run selector persists and affects all bundle reads.
 
-12) Commit: Add a “run status feed” endpoint (polling or SSE)
+12) Commit: Add a “run status feed” endpoint (polling or SSE) (done)
    - Include: run status, step statuses, last LLM call, latest artifacts.
    - Acceptance: UI can update without page refresh while a run is executing.
 

@@ -1310,6 +1310,72 @@ def list_runs(session_id: str) -> list[dict]:
         ]
 
 
+@app.get("/sessions/{session_id}/run-status")
+def get_run_status(
+    session_id: str,
+    run_id: Annotated[str | None, Query()] = None,
+) -> dict:
+    with get_session() as session:
+        resolved_run_id = _resolve_run_id(session, session_id, run_id)
+        run = session.query(Run).filter_by(id=resolved_run_id, session_id=session_id).first()
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found for session")
+
+        steps = (
+            session.query(RunStep)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
+            .order_by(RunStep.started_at.asc(), RunStep.id.asc())
+            .all()
+        )
+        latest_call = (
+            session.query(LLMCall)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
+            .order_by(LLMCall.created_at.desc(), LLMCall.id.desc())
+            .first()
+        )
+        latest_artifact = (
+            session.query(Artifact)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
+            .order_by(Artifact.created_at.desc(), Artifact.id.desc())
+            .first()
+        )
+
+        return {
+            "run_id": resolved_run_id,
+            "status": run.status,
+            "created_at": run.created_at.isoformat() if run.created_at else None,
+            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            "steps": [
+                {
+                    "id": step.id,
+                    "name": step.name,
+                    "status": step.status,
+                    "started_at": step.started_at.isoformat() if step.started_at else None,
+                    "finished_at": step.finished_at.isoformat() if step.finished_at else None,
+                    "error": step.error,
+                }
+                for step in steps
+            ],
+            "latest_llm_call": {
+                "id": latest_call.id,
+                "kind": latest_call.kind,
+                "status": latest_call.status,
+                "created_at": latest_call.created_at.isoformat(),
+                "error": latest_call.error,
+            }
+            if latest_call
+            else None,
+            "latest_artifact": {
+                "id": latest_artifact.id,
+                "kind": latest_artifact.kind,
+                "path": latest_artifact.path,
+                "created_at": latest_artifact.created_at.isoformat(),
+            }
+            if latest_artifact
+            else None,
+        }
+
+
 @app.put("/sessions/{session_id}/current-run")
 def set_current_run(session_id: str, run_id: str) -> dict:
     with get_session() as session:
