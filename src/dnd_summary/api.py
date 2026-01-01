@@ -884,6 +884,15 @@ def _resolve_run_id(session, session_id: str, run_id: str | None) -> str:
         if not run:
             raise HTTPException(status_code=404, detail="Run not found for session")
         return run.id
+    session_obj = session.query(Session).filter_by(id=session_id).first()
+    if session_obj and session_obj.current_run_id:
+        run = (
+            session.query(Run)
+            .filter_by(id=session_obj.current_run_id, session_id=session_id)
+            .first()
+        )
+        if run:
+            return run.id
     runs = (
         session.query(Run)
         .filter_by(session_id=session_id)
@@ -899,6 +908,10 @@ def _resolve_run_id(session, session_id: str, run_id: str | None) -> str:
 
 
 def _latest_run_ids_for_campaign(session, campaign_id: str) -> set[str]:
+    session_rows = session.query(Session).filter_by(campaign_id=campaign_id).all()
+    selected_by_session = {
+        row.id: row.current_run_id for row in session_rows if row.current_run_id
+    }
     runs = (
         session.query(Run)
         .filter_by(campaign_id=campaign_id)
@@ -917,7 +930,7 @@ def _latest_run_ids_for_campaign(session, campaign_id: str) -> set[str]:
     for session_id, run_id in fallback_by_session.items():
         if session_id not in latest_by_session:
             latest_by_session[session_id] = run_id
-    return set(latest_by_session.values())
+    return set(selected_by_session.values()) | set(latest_by_session.values())
 
 
 def _simple_score(text: str, query: str) -> float:

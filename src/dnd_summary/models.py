@@ -39,6 +39,7 @@ class Session(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False)
+    current_run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
     slug: Mapped[str] = mapped_column(String, nullable=False)
     session_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -47,6 +48,7 @@ class Session(Base):
     campaign = relationship("Campaign", back_populates="sessions")
     runs = relationship("Run", back_populates="session")
     utterances = relationship("Utterance", back_populates="session")
+    current_run = relationship("Run", foreign_keys=[current_run_id])
 
     __table_args__ = (UniqueConstraint("campaign_id", "slug", name="uq_session_campaign_slug"),)
 
