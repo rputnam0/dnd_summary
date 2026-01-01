@@ -2,19 +2,24 @@ from __future__ import annotations
 
 from temporalio import activity
 
+import re
+from difflib import SequenceMatcher
+
+from sqlalchemy import func
+
 from dnd_summary.db import get_session
 from dnd_summary.models import (
+    CampaignThread,
     Event,
     Mention,
     Quote,
+    Run,
     Scene,
     SessionExtraction,
     Thread,
     ThreadUpdate,
     Utterance,
 )
-import re
-from difflib import SequenceMatcher
 
 from dnd_summary.run_steps import run_step
 from dnd_summary.schemas import EvidenceSpan, SessionFacts
@@ -265,6 +270,39 @@ def _count_update_evidence_missing_spans(updates: list) -> int:
     return missing
 
 
+def _normalize_thread_title(title: str) -> str:
+    return " ".join(title.lower().split())
+
+
+def _get_or_create_campaign_thread(session, campaign_id: str, thread) -> CampaignThread | None:
+    canonical_title = _normalize_thread_title(thread.title or "")
+    if not canonical_title:
+        return None
+    existing = (
+        session.query(CampaignThread)
+        .filter(
+            CampaignThread.campaign_id == campaign_id,
+            func.lower(CampaignThread.canonical_title) == canonical_title,
+        )
+        .one_or_none()
+    )
+    if existing:
+        existing.status = thread.status
+        existing.summary = thread.summary or existing.summary
+        existing.kind = thread.kind
+        return existing
+    campaign_thread = CampaignThread(
+        campaign_id=campaign_id,
+        canonical_title=canonical_title,
+        kind=thread.kind,
+        status=thread.status,
+        summary=thread.summary,
+    )
+    session.add(campaign_thread)
+    session.flush()
+    return campaign_thread
+
+
 @activity.defn
 async def persist_session_facts_activity(payload: dict) -> dict:
     run_id = payload["run_id"]
@@ -281,6 +319,7 @@ async def persist_session_facts_activity(payload: dict) -> dict:
             if not extraction:
                 raise ValueError("Missing session_facts extraction")
 
+            run = session.query(Run).filter_by(id=run_id).one()
             facts = SessionFacts.model_validate(extraction.payload)
             utterances = (
                 session.query(Utterance)
@@ -446,9 +485,11 @@ async def persist_session_facts_activity(payload: dict) -> dict:
             thread_updates = []
             event_index_to_id = {idx: event.id for idx, event in enumerate(events)}
             for thread in facts.threads:
+                campaign_thread = _get_or_create_campaign_thread(session, run.campaign_id, thread)
                 thread_row = Thread(
                     run_id=run_id,
                     session_id=session_id,
+                    campaign_thread_id=campaign_thread.id if campaign_thread else None,
                     title=thread.title,
                     kind=thread.kind,
                     status=thread.status,

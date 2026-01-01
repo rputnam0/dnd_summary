@@ -32,6 +32,7 @@ class Campaign(Base):
 
     sessions = relationship("Session", back_populates="campaign")
     participants = relationship("Participant", back_populates="campaign")
+    campaign_threads = relationship("CampaignThread", back_populates="campaign")
 
 
 class Session(Base):
@@ -238,6 +239,9 @@ class Thread(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), nullable=False)
     session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    campaign_thread_id: Mapped[str | None] = mapped_column(
+        ForeignKey("campaign_threads.id"), nullable=True
+    )
     title: Mapped[str] = mapped_column(String, nullable=False)
     kind: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)
@@ -245,6 +249,28 @@ class Thread(Base):
     evidence: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class CampaignThread(Base):
+    __tablename__ = "campaign_threads"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False)
+    canonical_title: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    campaign = relationship("Campaign", back_populates="campaign_threads")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "campaign_id",
+            "canonical_title",
+            name="uq_campaign_thread_title",
+        ),
+    )
 
 
 class ThreadEntity(Base):

@@ -109,7 +109,7 @@ the repo in a working state.
    - Migration script that links by mention evidence + alias matching.
    - Acceptance: existing data becomes richer without re-running old sessions.
 
-16) Commit: Make threads canonical across sessions (stable quest IDs)
+16) Commit: Make threads canonical across sessions (stable quest IDs) (done)
    - Add `campaign_threads` (canonical) + `thread_instances` (per run/session) or equivalent.
    - Acceptance: quest journal has stable IDs and reliable history across sessions.
 

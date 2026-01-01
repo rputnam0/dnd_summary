@@ -891,6 +891,7 @@ def list_threads(
         return [
             {
                 "id": t.id,
+                "campaign_thread_id": t.campaign_thread_id,
                 "title": t.title,
                 "kind": t.kind,
                 "status": t.status,
@@ -1545,11 +1546,12 @@ def list_campaign_threads(
 
         latest_by_title: dict[str, dict] = {}
         for thread, sess in threads:
-            key = (thread.title or "").strip().lower()
+            key = thread.campaign_thread_id or " ".join((thread.title or "").lower().split())
             if not key:
                 continue
             entry = {
                 "id": thread.id,
+                "campaign_thread_id": thread.campaign_thread_id,
                 "title": thread.title,
                 "kind": thread.kind,
                 "status": thread.status,
@@ -1784,6 +1786,7 @@ def get_session_bundle(
             "threads": [
                 {
                     "id": t.id,
+                    "campaign_thread_id": t.campaign_thread_id,
                     "title": t.title,
                     "kind": t.kind,
                     "status": t.status,
