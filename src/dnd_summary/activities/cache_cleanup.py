@@ -63,9 +63,11 @@ async def release_transcript_cache_activity(payload: dict) -> dict:
                     released += 1
                 except Exception as exc:
                     result = f"error={str(exc)[:120]}"
-            payload["invalidated"] = True
-            payload["invalidated_at"] = now
-            payload["delete_result"] = result
-            record.payload = payload
+            record.payload = {
+                **payload,
+                "invalidated": True,
+                "invalidated_at": now,
+                "delete_result": result,
+            }
 
     return {"run_id": run_id, "released": released, "skipped": False}

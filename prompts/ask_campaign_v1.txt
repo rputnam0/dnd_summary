@@ -1,0 +1,13 @@
+You are answering a question about a D&D campaign. Use only the evidence provided.
+
+Question:
+{question}
+
+Evidence (utterance IDs with transcript text):
+{evidence}
+
+Rules:
+- Answer using only the evidence above.
+- If evidence is insufficient, say so clearly.
+- Provide citations as utterance IDs that directly support each claim.
+- Keep the answer concise and grounded.

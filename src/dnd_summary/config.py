@@ -37,5 +37,11 @@ class Settings(BaseSettings):
     llm_cache_storage_cost_per_million_hour: float = 1.00
     auth_enabled: bool = False
 
+    embedding_provider: str = "hash"
+    embedding_model: str = "text-embedding-004"
+    embedding_dimensions: int = 768
+    embedding_version: str = "v1"
+    embedding_batch_size: int = 48
+
 
 settings = Settings()

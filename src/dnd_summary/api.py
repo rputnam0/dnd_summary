@@ -15,6 +15,7 @@ import zipfile
 
 from dnd_summary.config import settings
 from dnd_summary.db import get_session
+from dnd_summary.embeddings import cosine_similarity, embed_texts
 from dnd_summary.llm import LLMClient
 from dnd_summary.mappings import load_character_map
 from dnd_summary.models import (
@@ -23,8 +24,10 @@ from dnd_summary.models import (
     CampaignMembership,
     Correction,
     Bookmark,
+    Embedding,
     Entity,
     EntityAlias,
+    EntityMention,
     Event,
     Quote,
     Run,
@@ -42,7 +45,7 @@ from dnd_summary.models import (
     Utterance,
     User,
 )
-from dnd_summary.schema_genai import semantic_search_schema
+from dnd_summary.schema_genai import ask_campaign_schema, semantic_search_schema
 from dnd_summary.transcript_format import format_transcript
 from dnd_summary.workflows.process_session import ProcessSessionWorkflow
 
@@ -427,6 +430,11 @@ def list_notes(
     with get_session() as session:
         campaign = _campaign_for_slug(session, campaign_slug, request)
         query = session.query(Note).filter(Note.campaign_id == campaign.id)
+        if settings.auth_enabled:
+            requester_id = _auth_user_id(request)
+            membership = _require_campaign_role(session, campaign.id, requester_id)
+            if membership.role != "dm":
+                query = query.filter(Note.created_by == requester_id)
         if session_id:
             query = query.filter(Note.session_id == session_id)
         if target_type:
@@ -512,6 +520,11 @@ def list_bookmarks(
     with get_session() as session:
         campaign = _campaign_for_slug(session, campaign_slug, request)
         query = session.query(Bookmark).filter(Bookmark.campaign_id == campaign.id)
+        if settings.auth_enabled:
+            requester_id = _auth_user_id(request)
+            membership = _require_campaign_role(session, campaign.id, requester_id)
+            if membership.role != "dm":
+                query = query.filter(Bookmark.created_by == requester_id)
         if session_id:
             query = query.filter(Bookmark.session_id == session_id)
         bookmarks = query.order_by(Bookmark.created_at.desc(), Bookmark.id.desc()).all()
@@ -1526,6 +1539,337 @@ def semantic_search_campaign(
         }
 
 
+@app.get("/campaigns/{campaign_slug}/semantic_retrieve")
+def semantic_retrieve_campaign(
+    campaign_slug: str,
+    request: Request,
+    q: str = Query(..., min_length=2),
+    top_k: Annotated[int, Query()] = 20,
+    include_all_runs: Annotated[bool, Query()] = False,
+    session_id: Annotated[str | None, Query()] = None,
+) -> dict:
+    with get_session() as session:
+        campaign = _campaign_for_slug(session, campaign_slug, request)
+
+        run_ids = None
+        if not include_all_runs:
+            run_ids = _latest_run_ids_for_campaign(session, campaign.id)
+
+        query_vector = embed_texts([q])[0]
+        embedding_query = _embedding_query_base(session, campaign.id, run_ids, session_id)
+
+        embeddings: list[Embedding] = []
+        dialect = session.bind.dialect.name if session.bind else "unknown"
+        if dialect == "postgresql":
+            distance = Embedding.embedding.op("<->")(query_vector)
+            embeddings = (
+                embedding_query.order_by(distance.asc())
+                .limit(top_k * 4)
+                .all()
+            )
+        else:
+            candidates = embedding_query.all()
+            scored = [
+                (entry, cosine_similarity(entry.embedding or [], query_vector))
+                for entry in candidates
+            ]
+            scored.sort(key=lambda item: item[1], reverse=True)
+            embeddings = [entry for entry, _score in scored[: top_k * 4]]
+
+        if not embeddings:
+            return {"query": q, "results": [], "missing_embeddings": True}
+
+        entity_ids = {e.target_id for e in embeddings if e.target_type == "entity"}
+        event_ids = {e.target_id for e in embeddings if e.target_type == "event"}
+        scene_ids = {e.target_id for e in embeddings if e.target_type == "scene"}
+        thread_ids = {e.target_id for e in embeddings if e.target_type == "thread"}
+        quote_ids = {e.target_id for e in embeddings if e.target_type == "quote"}
+        utterance_ids = {e.target_id for e in embeddings if e.target_type == "utterance"}
+
+        entity_corrections = _load_corrections(session, campaign.id, session_id, "entity")
+        hidden_entities, merge_entities, rename_entities = _entity_correction_maps(entity_corrections)
+        thread_corrections = _load_corrections(session, campaign.id, session_id, "thread")
+        hidden_threads, merge_threads, title_map, status_map, summary_map = _thread_correction_maps(
+            thread_corrections
+        )
+        spoiler_cutoff = _spoiler_cutoff(session, campaign.id, request, session_id)
+        spoiler_map = _spoiler_map(session, campaign.id)
+        quote_corrections = _load_corrections(session, campaign.id, session_id, "quote")
+        utterance_corrections = _load_corrections(
+            session,
+            campaign.id,
+            session_id,
+            "utterance",
+        )
+        redacted_quotes = _redacted_ids(quote_corrections)
+        redacted_utterances = _redacted_ids(utterance_corrections)
+
+        entities = (
+            session.query(Entity)
+            .filter(Entity.id.in_(entity_ids))
+            .all()
+            if entity_ids
+            else []
+        )
+        entity_evidence = _entity_evidence(session, entity_ids, redacted_utterances)
+        entity_lookup = {entity.id: entity for entity in entities}
+
+        events = (
+            session.query(Event).filter(Event.id.in_(event_ids)).all() if event_ids else []
+        )
+        event_lookup = {event.id: event for event in events}
+
+        scenes = (
+            session.query(Scene).filter(Scene.id.in_(scene_ids)).all() if scene_ids else []
+        )
+        scene_lookup = {scene.id: scene for scene in scenes}
+
+        threads = (
+            session.query(Thread).filter(Thread.id.in_(thread_ids)).all() if thread_ids else []
+        )
+        thread_lookup = {thread.id: thread for thread in threads}
+
+        quotes = (
+            session.query(Quote).filter(Quote.id.in_(quote_ids)).all() if quote_ids else []
+        )
+        quote_lookup = {quote.id: quote for quote in quotes}
+
+        utterances = (
+            session.query(Utterance)
+            .filter(Utterance.id.in_(utterance_ids))
+            .all()
+            if utterance_ids
+            else []
+        )
+        utterance_lookup = {utt.id: utt for utt in utterances}
+
+        scored: list[dict] = []
+        for entry in embeddings:
+            if entry.target_type == "entity":
+                entity = entity_lookup.get(entry.target_id)
+                if not entity or entity.id in hidden_entities or entity.id in merge_entities:
+                    continue
+                if spoiler_cutoff is not None and spoiler_map.get(("entity", entity.id), 0) > spoiler_cutoff:
+                    continue
+                evidence = entity_evidence.get(entity.id, [])
+                if not evidence:
+                    continue
+                scored.append(
+                    {
+                        "type": "entity",
+                        "id": entity.id,
+                        "session_id": None,
+                        "name": rename_entities.get(entity.id, entity.canonical_name),
+                        "description": entity.description,
+                        "evidence": evidence,
+                        "content": entry.content,
+                        "score": cosine_similarity(entry.embedding or [], query_vector),
+                    }
+                )
+                continue
+
+            if entry.target_type == "event":
+                event = event_lookup.get(entry.target_id)
+                if not event:
+                    continue
+                if spoiler_cutoff is not None and spoiler_map.get(("event", event.id), 0) > spoiler_cutoff:
+                    continue
+                evidence = _filter_evidence_spans(event.evidence, redacted_utterances)
+                if not evidence:
+                    continue
+                scored.append(
+                    {
+                        "type": "event",
+                        "id": event.id,
+                        "session_id": event.session_id,
+                        "event_type": event.event_type,
+                        "summary": event.summary,
+                        "evidence": evidence,
+                        "content": entry.content,
+                        "score": cosine_similarity(entry.embedding or [], query_vector),
+                    }
+                )
+                continue
+
+            if entry.target_type == "scene":
+                scene = scene_lookup.get(entry.target_id)
+                if not scene:
+                    continue
+                evidence = _filter_evidence_spans(scene.evidence, redacted_utterances)
+                if not evidence:
+                    continue
+                scored.append(
+                    {
+                        "type": "scene",
+                        "id": scene.id,
+                        "session_id": scene.session_id,
+                        "title": scene.title,
+                        "summary": scene.summary,
+                        "evidence": evidence,
+                        "content": entry.content,
+                        "score": cosine_similarity(entry.embedding or [], query_vector),
+                    }
+                )
+                continue
+
+            if entry.target_type == "thread":
+                thread = thread_lookup.get(entry.target_id)
+                if not thread or thread.id in hidden_threads or thread.id in merge_threads:
+                    continue
+                if spoiler_cutoff is not None and spoiler_map.get(("thread", thread.id), 0) > spoiler_cutoff:
+                    continue
+                evidence = _filter_evidence_spans(thread.evidence, redacted_utterances)
+                if not evidence:
+                    continue
+                scored.append(
+                    {
+                        "type": "thread",
+                        "id": thread.id,
+                        "session_id": thread.session_id,
+                        "title": title_map.get(thread.id, thread.title),
+                        "summary": summary_map.get(thread.id, thread.summary),
+                        "status": status_map.get(thread.id, thread.status),
+                        "evidence": evidence,
+                        "content": entry.content,
+                        "score": cosine_similarity(entry.embedding or [], query_vector),
+                    }
+                )
+                continue
+
+            if entry.target_type == "quote":
+                quote = quote_lookup.get(entry.target_id)
+                if not quote:
+                    continue
+                if quote.id in redacted_quotes or quote.utterance_id in redacted_utterances:
+                    continue
+                evidence = _quote_evidence(quote, redacted_utterances)
+                if not evidence:
+                    continue
+                scored.append(
+                    {
+                        "type": "quote",
+                        "id": quote.id,
+                        "session_id": quote.session_id,
+                        "speaker": quote.speaker,
+                        "note": quote.note,
+                        "display_text": _quote_display_text(
+                            quote, {utt.id: utt.text for utt in utterances}
+                        ),
+                        "evidence": evidence,
+                        "content": entry.content,
+                        "score": cosine_similarity(entry.embedding or [], query_vector),
+                    }
+                )
+                continue
+
+            if entry.target_type == "utterance":
+                utt = utterance_lookup.get(entry.target_id)
+                if not utt or utt.id in redacted_utterances:
+                    continue
+                evidence = _utterance_evidence(utt)
+                scored.append(
+                    {
+                        "type": "utterance",
+                        "id": utt.id,
+                        "session_id": utt.session_id,
+                        "participant_id": utt.participant_id,
+                        "start_ms": utt.start_ms,
+                        "end_ms": utt.end_ms,
+                        "text": utt.text,
+                        "evidence": evidence,
+                        "content": entry.content,
+                        "score": cosine_similarity(entry.embedding or [], query_vector),
+                    }
+                )
+
+        scored.sort(key=lambda item: item["score"], reverse=True)
+        scored = scored[:top_k]
+
+        evidence_utterance_ids: set[str] = set()
+        for item in scored:
+            evidence_utterance_ids |= _utterance_ids_from_evidence(item.get("evidence"))
+        utterance_text_lookup = _utterance_lookup_by_id(session, evidence_utterance_ids)
+        evidence_utterances = {
+            utt_id: text
+            for utt_id, text in utterance_text_lookup.items()
+            if utt_id not in redacted_utterances
+        }
+
+        return {
+            "query": q,
+            "results": scored,
+            "missing_embeddings": False,
+            "evidence_utterances": evidence_utterances,
+        }
+
+
+@app.post("/campaigns/{campaign_slug}/ask")
+def ask_campaign(
+    campaign_slug: str,
+    payload: dict,
+    request: Request,
+    include_all_runs: Annotated[bool, Query()] = False,
+    session_id: Annotated[str | None, Query()] = None,
+) -> dict:
+    question = (payload.get("question") or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Missing question")
+
+    retrieval = semantic_retrieve_campaign(
+        campaign_slug,
+        request,
+        q=question,
+        include_all_runs=include_all_runs,
+        session_id=session_id,
+    )
+    results = retrieval.get("results") or []
+    evidence_utterances = retrieval.get("evidence_utterances") or {}
+    if not results:
+        return {
+            "answer": "I couldn't find evidence in the campaign data for that question.",
+            "citations": [],
+            "results": [],
+        }
+
+    evidence_lines = []
+    used_utterances: set[str] = set()
+    for item in results:
+        for span in item.get("evidence", []):
+            utterance_id = span.get("utterance_id")
+            if not utterance_id or utterance_id in used_utterances:
+                continue
+            text = evidence_utterances.get(utterance_id)
+            if not text:
+                continue
+            used_utterances.add(utterance_id)
+            evidence_lines.append(f"[{utterance_id}] {text.strip()}")
+    evidence_block = "\n".join(evidence_lines) or "[none]"
+
+    prompt = (
+        Path(settings.prompts_root) / "ask_campaign_v1.txt"
+    ).read_text(encoding="utf-8").format(
+        question=question,
+        evidence=evidence_block,
+    )
+
+    try:
+        client = LLMClient()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    raw = client.generate_json_schema(prompt, schema=ask_campaign_schema())
+    try:
+        response = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail="Invalid LLM response") from exc
+
+    return {
+        "answer": response.get("answer", ""),
+        "citations": response.get("citations", []),
+        "results": results,
+    }
+
+
 @app.get("/sessions/{session_id}/scenes")
 def list_scenes(
     session_id: str,
@@ -1721,6 +2065,17 @@ def _utterance_lookup(session, session_ids: set[str]) -> dict[str, str]:
     return {utt.id: utt.text for utt in utterances}
 
 
+def _utterance_lookup_by_id(session, utterance_ids: set[str]) -> dict[str, str]:
+    if not utterance_ids:
+        return {}
+    utterances = (
+        session.query(Utterance)
+        .filter(Utterance.id.in_(sorted(utterance_ids)))
+        .all()
+    )
+    return {utt.id: utt.text for utt in utterances}
+
+
 def _quote_display_text(quote: Quote, utterance_lookup: dict[str, str]) -> str | None:
     if quote.clean_text:
         return quote.clean_text
@@ -1793,6 +2148,90 @@ def _simple_score(text: str, query: str) -> float:
     if not hay or not needle:
         return 0.0
     return float(hay.count(needle))
+
+
+def _embedding_query_base(session, campaign_id: str, run_ids: set[str] | None, session_id: str | None):
+    query = (
+        session.query(Embedding)
+        .filter(
+            Embedding.campaign_id == campaign_id,
+            Embedding.model == settings.embedding_model,
+            Embedding.version == settings.embedding_version,
+        )
+    )
+    if session_id:
+        query = query.filter(
+            or_(Embedding.session_id == session_id, Embedding.session_id.is_(None))
+        )
+    if run_ids is not None:
+        query = query.filter(or_(Embedding.run_id.in_(run_ids), Embedding.run_id.is_(None)))
+    return query
+
+
+def _filter_evidence_spans(
+    evidence: list[dict] | None,
+    redacted_utterances: set[str],
+) -> list[dict]:
+    filtered = []
+    for span in evidence or []:
+        utterance_id = span.get("utterance_id")
+        if not utterance_id or utterance_id in redacted_utterances:
+            continue
+        filtered.append(span)
+    return filtered
+
+
+def _entity_evidence(
+    session,
+    entity_ids: set[str],
+    redacted_utterances: set[str],
+) -> dict[str, list[dict]]:
+    if not entity_ids:
+        return {}
+    rows = (
+        session.query(EntityMention.entity_id, Mention.evidence)
+        .join(Mention, Mention.id == EntityMention.mention_id)
+        .filter(EntityMention.entity_id.in_(entity_ids))
+        .all()
+    )
+    evidence_map: dict[str, list[dict]] = {}
+    for entity_id, evidence in rows:
+        spans = _filter_evidence_spans(evidence, redacted_utterances)
+        if not spans:
+            continue
+        evidence_map.setdefault(entity_id, []).extend(spans)
+    return evidence_map
+
+
+def _quote_evidence(quote: Quote, redacted_utterances: set[str]) -> list[dict]:
+    if not quote.utterance_id or quote.utterance_id in redacted_utterances:
+        return []
+    if quote.char_start is None or quote.char_end is None:
+        return [
+            {
+                "utterance_id": quote.utterance_id,
+                "kind": "quote",
+            }
+        ]
+    return [
+        {
+            "utterance_id": quote.utterance_id,
+            "char_start": quote.char_start,
+            "char_end": quote.char_end,
+            "kind": "quote",
+        }
+    ]
+
+
+def _utterance_evidence(utterance: Utterance) -> list[dict]:
+    return [
+        {
+            "utterance_id": utterance.id,
+            "char_start": 0,
+            "char_end": len(utterance.text or ""),
+            "kind": "support",
+        }
+    ]
 
 
 def _score_terms(text: str, terms: list[str]) -> float:

@@ -16,6 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from dnd_summary.embeddings import EmbeddingVector
 
 class Base(DeclarativeBase):
     pass
@@ -132,7 +133,7 @@ class Session(Base):
     occurred_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     campaign = relationship("Campaign", back_populates="sessions")
-    runs = relationship("Run", back_populates="session")
+    runs = relationship("Run", back_populates="session", foreign_keys="Run.session_id")
     utterances = relationship("Utterance", back_populates="session")
     current_run = relationship("Run", foreign_keys=[current_run_id])
     corrections = relationship("Correction", back_populates="session")
@@ -180,7 +181,7 @@ class Run(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    session = relationship("Session", back_populates="runs")
+    session = relationship("Session", back_populates="runs", foreign_keys=[session_id])
 
 
 class RunStep(Base):
@@ -476,3 +477,30 @@ class Artifact(Base):
     path: Mapped[str] = mapped_column(String, nullable=False)
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class Embedding(Base):
+    __tablename__ = "embeddings"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False)
+    session_id: Mapped[str | None] = mapped_column(ForeignKey("sessions.id"), nullable=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
+    target_type: Mapped[str] = mapped_column(String, nullable=False)
+    target_id: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(EmbeddingVector, nullable=False)
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    version: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "campaign_id",
+            "target_type",
+            "target_id",
+            "model",
+            "version",
+            name="uq_embedding_target_model_version",
+        ),
+    )

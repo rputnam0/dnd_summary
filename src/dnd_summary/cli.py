@@ -175,6 +175,43 @@ def list_entities(campaign_slug: str) -> None:
             typer.echo(f"{entity.entity_type}\t{entity.canonical_name}")
 
 
+@app.command()
+def build_embeddings(
+    campaign_slug: str,
+    session_slug: str | None = None,
+    include_all_runs: bool = False,
+    replace: bool = False,
+) -> None:
+    """Generate semantic embeddings for campaign content."""
+    from dnd_summary.db import get_session
+    from dnd_summary.embedding_index import build_embeddings_for_campaign
+    from dnd_summary.models import Campaign, Session
+
+    with get_session() as session:
+        campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
+        if not campaign:
+            raise SystemExit("Campaign not found.")
+        session_obj = None
+        if session_slug:
+            session_obj = (
+                session.query(Session)
+                .filter_by(campaign_id=campaign.id, slug=session_slug)
+                .first()
+            )
+            if not session_obj:
+                raise SystemExit("Session not found.")
+        stats = build_embeddings_for_campaign(
+            session,
+            campaign.id,
+            session_id=session_obj.id if session_obj else None,
+            include_all_runs=include_all_runs,
+            replace=replace,
+        )
+        typer.echo(
+            f"embeddings created={stats.created} skipped={stats.skipped} deleted={stats.deleted}"
+        )
+
+
 def _resolve_latest_run(session, session_id: str, run_id: str | None) -> Run:
     from dnd_summary.models import Run
 

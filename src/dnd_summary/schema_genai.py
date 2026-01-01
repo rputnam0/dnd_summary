@@ -210,6 +210,28 @@ def quotes_schema() -> types.Schema:
     )
 
 
+def ask_campaign_schema() -> types.Schema:
+    return types.Schema(
+        type=types.Type.OBJECT,
+        required=["answer", "citations"],
+        properties={
+            "answer": types.Schema(type=types.Type.STRING),
+            "citations": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(
+                    type=types.Type.OBJECT,
+                    required=["utterance_id"],
+                    properties={
+                        "utterance_id": types.Schema(type=types.Type.STRING),
+                        "quote": types.Schema(type=types.Type.STRING),
+                        "note": types.Schema(type=types.Type.STRING),
+                    },
+                ),
+            ),
+        },
+    )
+
+
 def events_schema() -> types.Schema:
     evidence_schema = _evidence_schema()
     return types.Schema(
