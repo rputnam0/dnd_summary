@@ -1665,7 +1665,7 @@ def semantic_retrieve_campaign(
                         "description": entity.description,
                         "evidence": evidence,
                         "content": entry.content,
-                        "dense_score": cosine_similarity(entry.embedding or [], query_vector),
+                        "dense_score": cosine_similarity(_embedding_values(entry), query_vector),
                     }
                 )
                 continue
@@ -1688,7 +1688,7 @@ def semantic_retrieve_campaign(
                         "summary": event.summary,
                         "evidence": evidence,
                         "content": entry.content,
-                        "dense_score": cosine_similarity(entry.embedding or [], query_vector),
+                        "dense_score": cosine_similarity(_embedding_values(entry), query_vector),
                     }
                 )
                 continue
@@ -1709,7 +1709,7 @@ def semantic_retrieve_campaign(
                         "summary": scene.summary,
                         "evidence": evidence,
                         "content": entry.content,
-                        "dense_score": cosine_similarity(entry.embedding or [], query_vector),
+                        "dense_score": cosine_similarity(_embedding_values(entry), query_vector),
                     }
                 )
                 continue
@@ -1733,7 +1733,7 @@ def semantic_retrieve_campaign(
                         "status": status_map.get(thread.id, thread.status),
                         "evidence": evidence,
                         "content": entry.content,
-                        "dense_score": cosine_similarity(entry.embedding or [], query_vector),
+                        "dense_score": cosine_similarity(_embedding_values(entry), query_vector),
                     }
                 )
                 continue
@@ -1759,7 +1759,7 @@ def semantic_retrieve_campaign(
                         ),
                         "evidence": evidence,
                         "content": entry.content,
-                        "dense_score": cosine_similarity(entry.embedding or [], query_vector),
+                        "dense_score": cosine_similarity(_embedding_values(entry), query_vector),
                     }
                 )
                 continue
@@ -1780,7 +1780,7 @@ def semantic_retrieve_campaign(
                         "text": utt.text,
                         "evidence": evidence,
                         "content": entry.content,
-                        "dense_score": cosine_similarity(entry.embedding or [], query_vector),
+                        "dense_score": cosine_similarity(_embedding_values(entry), query_vector),
                     }
                 )
 
@@ -2208,6 +2208,14 @@ def _embedding_query_base(session, campaign_id: str, run_ids: set[str] | None, s
     if run_ids is not None:
         query = query.filter(or_(Embedding.run_id.in_(run_ids), Embedding.run_id.is_(None)))
     return query
+
+
+def _embedding_values(entry: Embedding) -> list[float]:
+    if entry.embedding is None:
+        return []
+    if hasattr(entry.embedding, "tolist"):
+        return entry.embedding.tolist()
+    return list(entry.embedding)
 
 
 def _filter_evidence_spans(

@@ -39,7 +39,7 @@ class Settings(BaseSettings):
 
     embedding_provider: str = "hash"
     embedding_model: str = "text-embedding-004"
-    embedding_dimensions: int = 768
+    embedding_dimensions: int = 1024
     embedding_version: str = "v1"
     embedding_batch_size: int = 48
     embedding_device: str = "cpu"
