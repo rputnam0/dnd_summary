@@ -32,6 +32,7 @@
 - Comprehensive pytest suite for API/CLI/activities/parsing
 - Embeddings storage + semantic retrieval + ask-campaign endpoint
 - Summary variants (player/DM/hooks/NPC changes) + improved DOCX rendering
+- External sources ingestion for character sheets + dice rolls with transcript alignment
 
 ## Roadmap (commit-sized)
 
@@ -287,11 +288,11 @@ Suggested default settings (local, RTX 5080-class)
    - Acceptance: exported doc is readable and consistently formatted.
 
 ### Phase 9: External sources (v1+ contract)
-31) Commit: Define canonical file formats and DB tables for character sheets + dice logs
+31) Commit: Define canonical file formats and DB tables for character sheets + dice logs (done)
    - Add schemas and ingestion stubs (no extraction changes yet).
    - Acceptance: pipeline can ingest and store these artifacts with provenance.
 
-32) Commit: Align dice/roll events to transcript time and expose in UI
+32) Commit: Align dice/roll events to transcript time and expose in UI (done)
    - Use timestamps when available; attach as evidence to combat events.
    - Acceptance: combat narration becomes mechanically accurate when logs exist.
 

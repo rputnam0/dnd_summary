@@ -181,3 +181,4 @@ def test_ingest_transcript_activity_ingests_external_sources(
     assert len(rolls) == 2
     assert rolls[0].t_ms == 1000
     assert rolls[0].character_name == "Hero"
+    assert rolls[0].utterance_id is not None

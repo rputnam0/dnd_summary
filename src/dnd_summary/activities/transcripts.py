@@ -218,11 +218,27 @@ def _ingest_character_sheets(
     return {"count": stored, "errors": errors}
 
 
+def _align_roll_to_utterance(roll_ms: int, utterances: list[Utterance]) -> str | None:
+    if not utterances:
+        return None
+    best_id = None
+    best_distance = None
+    for utt in utterances:
+        if utt.start_ms <= roll_ms <= utt.end_ms:
+            return utt.id
+        distance = min(abs(roll_ms - utt.start_ms), abs(roll_ms - utt.end_ms))
+        if best_distance is None or distance < best_distance:
+            best_distance = distance
+            best_id = utt.id
+    return best_id
+
+
 def _ingest_dice_rolls(
     session,
     campaign: Campaign,
     session_obj: Session,
     session_dir: Path,
+    utterances: list[Utterance],
 ) -> dict:
     rolls_path = find_rolls_path(session_dir)
     if not rolls_path:
@@ -236,6 +252,14 @@ def _ingest_dice_rolls(
         .first()
     )
     if existing and existing.source_hash == source_hash:
+        existing_rolls = (
+            session.query(DiceRoll)
+            .filter_by(session_id=session_obj.id, source_path=source_path)
+            .order_by(DiceRoll.roll_index.asc())
+            .all()
+        )
+        for roll in existing_rolls:
+            roll.utterance_id = _align_roll_to_utterance(roll.t_ms, utterances)
         return {"count": 0, "errors": []}
     if existing:
         session.query(DiceRoll).filter_by(
@@ -245,11 +269,12 @@ def _ingest_dice_rolls(
 
     rolls, errors = parse_rolls_jsonl(rolls_path)
     for roll in rolls:
+        utterance_id = _align_roll_to_utterance(roll.t_ms, utterances)
         session.add(
             DiceRoll(
                 campaign_id=campaign.id,
                 session_id=session_obj.id,
-                utterance_id=None,
+                utterance_id=utterance_id,
                 source_path=source_path,
                 source_hash=source_hash,
                 roll_index=roll.line_number,
@@ -384,7 +409,19 @@ async def ingest_transcript_activity(payload: dict) -> dict:
         run.finished_at = datetime.utcnow()
 
         sheets_result = _ingest_character_sheets(session, campaign, session_obj, session_dir)
-        rolls_result = _ingest_dice_rolls(session, campaign, session_obj, session_dir)
+        utterance_rows = (
+            session.query(Utterance)
+            .filter_by(session_id=session_obj.id)
+            .order_by(Utterance.start_ms.asc(), Utterance.id.asc())
+            .all()
+        )
+        rolls_result = _ingest_dice_rolls(
+            session,
+            campaign,
+            session_obj,
+            session_dir,
+            utterance_rows,
+        )
         session.flush()
 
     return {

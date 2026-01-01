@@ -23,8 +23,10 @@ from dnd_summary.models import (
     Artifact,
     Campaign,
     CampaignMembership,
+    CharacterSheetSnapshot,
     Correction,
     Bookmark,
+    DiceRoll,
     Embedding,
     Entity,
     EntityAlias,
@@ -3038,6 +3040,12 @@ def get_session_bundle(
             .order_by(SessionExtraction.created_at.asc(), SessionExtraction.id.asc())
             .all()
         )
+        run_steps = (
+            session.query(RunStep)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
+            .order_by(RunStep.started_at.asc(), RunStep.id.asc())
+            .all()
+        )
         artifacts = (
             session.query(Artifact)
             .filter_by(session_id=session_id, run_id=resolved_run_id)
@@ -3065,6 +3073,19 @@ def get_session_bundle(
             transcript_text, key_to_id = format_transcript(utterances, character_map)
             transcript_lines = transcript_text.splitlines()
             utterance_timecodes = {utt_id: key for key, utt_id in key_to_id.items()}
+
+        character_sheets = (
+            session.query(CharacterSheetSnapshot)
+            .filter_by(session_id=session_id)
+            .order_by(CharacterSheetSnapshot.created_at.desc())
+            .all()
+        )
+        dice_rolls = (
+            session.query(DiceRoll)
+            .filter_by(session_id=session_id)
+            .order_by(DiceRoll.t_ms.asc(), DiceRoll.roll_index.asc())
+            .all()
+        )
 
         scenes = (
             session.query(Scene)
@@ -3156,6 +3177,44 @@ def get_session_bundle(
                 "lines": transcript_lines,
                 "utterance_timecodes": utterance_timecodes,
             },
+            "character_sheets": [
+                {
+                    "id": sheet.id,
+                    "character_slug": sheet.character_slug,
+                    "character_name": sheet.character_name,
+                    "source_path": sheet.source_path,
+                    "payload": sheet.payload,
+                    "created_at": sheet.created_at.isoformat(),
+                }
+                for sheet in character_sheets
+            ],
+            "dice_rolls": [
+                {
+                    "id": roll.id,
+                    "t_ms": roll.t_ms,
+                    "character_name": roll.character_name,
+                    "kind": roll.kind,
+                    "expression": roll.expression,
+                    "total": roll.total,
+                    "detail": roll.detail,
+                    "utterance_id": (
+                        None
+                        if roll.utterance_id in redacted_utterances
+                        else roll.utterance_id
+                    ),
+                    "utterance_timecode": (
+                        utterance_timecodes.get(roll.utterance_id)
+                        if roll.utterance_id not in redacted_utterances
+                        else None
+                    ),
+                    "evidence": (
+                        [{"utterance_id": roll.utterance_id, "kind": "support"}]
+                        if roll.utterance_id and roll.utterance_id not in redacted_utterances
+                        else []
+                    ),
+                }
+                for roll in dice_rolls
+            ],
             "artifacts": [
                 {
                     "id": a.id,
