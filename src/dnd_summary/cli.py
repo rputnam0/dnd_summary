@@ -24,7 +24,9 @@ def show_config() -> None:
 def worker() -> None:
     """Start the Temporal worker (workflow + activities)."""
     from dnd_summary.temporal_worker import run_worker
+    from dnd_summary.logging_config import setup_logging
 
+    setup_logging()
     asyncio.run(run_worker())
 
 
@@ -56,6 +58,7 @@ def run_session_local(campaign_slug: str, session_slug: str) -> None:
     """Run the pipeline locally without Temporal (for quick testing)."""
     from dnd_summary.activities.extract import extract_session_facts_activity
     from dnd_summary.activities.cache_cleanup import release_transcript_cache_activity
+    from dnd_summary.activities.evidence_repair import repair_evidence_activity
     from dnd_summary.activities.persist import persist_session_facts_activity
     from dnd_summary.activities.resolve import resolve_entities_activity
     from dnd_summary.activities.run_status import update_run_status_activity
@@ -65,8 +68,10 @@ def run_session_local(campaign_slug: str, session_slug: str) -> None:
         write_summary_activity,
     )
     from dnd_summary.activities.transcripts import ingest_transcript_activity
+    from dnd_summary.logging_config import setup_logging
 
     async def _run() -> None:
+        setup_logging()
         payload = {"campaign_slug": campaign_slug, "session_slug": session_slug}
         transcript = await ingest_transcript_activity(payload)
         extract_payload = {
@@ -75,6 +80,7 @@ def run_session_local(campaign_slug: str, session_slug: str) -> None:
         }
         try:
             await extract_session_facts_activity(extract_payload)
+            await repair_evidence_activity(extract_payload)
             await persist_session_facts_activity(extract_payload)
             await resolve_entities_activity(extract_payload)
         except Exception:
@@ -103,6 +109,71 @@ def run_session_local(campaign_slug: str, session_slug: str) -> None:
         await release_transcript_cache_activity(
             {"run_id": transcript["run_id"], "status": "completed"}
         )
+
+    asyncio.run(_run())
+
+
+@app.command()
+def resume_partial(
+    campaign_slug: str,
+    session_slug: str,
+    run_id: str | None = None,
+    force: bool = False,
+    dry_run: bool = False,
+) -> None:
+    """Resume summary steps for a partial run without re-running extraction."""
+    from dnd_summary.activities.cache_cleanup import release_transcript_cache_activity
+    from dnd_summary.activities.run_status import update_run_status_activity
+    from dnd_summary.activities.summary import (
+        plan_summary_activity,
+        render_summary_docx_activity,
+        write_summary_activity,
+    )
+    from dnd_summary.db import get_session
+    from dnd_summary.logging_config import setup_logging
+    from dnd_summary.models import Campaign, Run, Session
+
+    async def _run() -> None:
+        setup_logging()
+        with get_session() as session:
+            session_obj = (
+                session.query(Session)
+                .join(Campaign, Session.campaign_id == Campaign.id)
+                .filter(Campaign.slug == campaign_slug, Session.slug == session_slug)
+                .first()
+            )
+            if not session_obj:
+                raise SystemExit("Session not found.")
+            if run_id:
+                run = session.query(Run).filter_by(id=run_id, session_id=session_obj.id).first()
+            else:
+                run = (
+                    session.query(Run)
+                    .filter_by(session_id=session_obj.id)
+                    .order_by(Run.created_at.desc())
+                    .first()
+                )
+            if not run:
+                raise SystemExit("Run not found for session.")
+            if run.status != "partial" and not force:
+                raise SystemExit("Run is not partial; use --force to resume anyway.")
+
+        if dry_run:
+            typer.echo(f"Resume dry-run for {campaign_slug}/{session_slug} run_id={run.id}")
+            return
+
+        payload = {"run_id": run.id, "session_id": session_obj.id}
+        try:
+            await plan_summary_activity(payload)
+            await write_summary_activity(payload)
+            await render_summary_docx_activity(payload)
+        except Exception:
+            await update_run_status_activity({"run_id": run.id, "status": "partial"})
+            await release_transcript_cache_activity({"run_id": run.id, "status": "partial"})
+            raise
+
+        await update_run_status_activity({"run_id": run.id, "status": "completed"})
+        await release_transcript_cache_activity({"run_id": run.id, "status": "completed"})
 
     asyncio.run(_run())
 
@@ -401,10 +472,44 @@ def inspect_usage(campaign_slug: str, session_slug: str, run_id: str | None = No
 
 
 @app.command()
+def verify_cache(campaign_slug: str, session_slug: str, run_id: str | None = None) -> None:
+    """Verify transcript cache usage shows cached tokens for a run."""
+    from dnd_summary.db import get_session
+    from dnd_summary.models import Campaign, Session, SessionExtraction
+
+    with get_session() as session:
+        session_obj = (
+            session.query(Session)
+            .join(Campaign, Session.campaign_id == Campaign.id)
+            .filter(Campaign.slug == campaign_slug, Session.slug == session_slug)
+            .first()
+        )
+        if not session_obj:
+            raise SystemExit("Session not found.")
+        run = _resolve_latest_run(session, session_obj.id, run_id)
+        records = (
+            session.query(SessionExtraction)
+            .filter_by(run_id=run.id, session_id=session_obj.id, kind="llm_usage")
+            .order_by(SessionExtraction.created_at.asc(), SessionExtraction.id.asc())
+            .all()
+        )
+        cached_tokens = sum(
+            (record.payload or {}).get("cached_content_token_count", 0) for record in records
+        )
+        typer.echo(f"run_id={run.id}")
+        typer.echo(f"cached_tokens={cached_tokens}")
+        if cached_tokens <= 0:
+            raise SystemExit("No cached tokens detected; run again to confirm cache usage.")
+
+
+@app.command()
 def api(host: str = "127.0.0.1", port: int = 8000) -> None:
     """Run the local FastAPI server."""
     import uvicorn
 
+    from dnd_summary.logging_config import setup_logging
+
+    setup_logging()
     uvicorn.run("dnd_summary.api:app", host=host, port=port, reload=False)
 
 

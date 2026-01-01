@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     llm_cached_cost_per_million: float = 0.05
     llm_cache_storage_cost_per_million_hour: float = 1.00
     auth_enabled: bool = False
+    log_format: str = "json"
+    log_level: str = "INFO"
 
     embedding_provider: str = "hash"
     embedding_model: str = "text-embedding-004"
@@ -56,6 +58,9 @@ class Settings(BaseSettings):
     semantic_dense_top_k: int = 100
     semantic_rerank_top_k: int = 50
     semantic_final_k: int = 15
+
+    evidence_repair_enabled: bool = False
+    evidence_repair_missing_spans_threshold: int = 1
 
 
 settings = Settings()

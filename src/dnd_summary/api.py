@@ -655,6 +655,70 @@ def list_sessions(campaign_slug: str, request: Request) -> list[dict]:
         return payload
 
 
+@app.get("/campaigns/{campaign_slug}/admin/metrics")
+def get_admin_metrics(campaign_slug: str, request: Request) -> dict:
+    _validate_slug(campaign_slug, "campaign")
+    with get_session() as session:
+        campaign = _campaign_for_slug(session, campaign_slug, request)
+        _require_dm(session, campaign.id, request)
+        sessions_count = session.query(Session).filter_by(campaign_id=campaign.id).count()
+        runs_query = session.query(Run).filter_by(campaign_id=campaign.id)
+        runs_total = runs_query.count()
+        runs_by_status = {
+            status: count
+            for status, count in runs_query.group_by(Run.status).with_entities(
+                Run.status, func.count(Run.id)
+            )
+        }
+        utterances_count = (
+            session.query(Utterance)
+            .join(Session, Session.id == Utterance.session_id)
+            .filter(Session.campaign_id == campaign.id)
+            .count()
+        )
+        latest_run = (
+            session.query(Run)
+            .filter_by(campaign_id=campaign.id)
+            .order_by(Run.created_at.desc())
+            .first()
+        )
+        return {
+            "campaign_id": campaign.id,
+            "sessions": sessions_count,
+            "runs": runs_total,
+            "runs_by_status": runs_by_status,
+            "utterances": utterances_count,
+            "latest_run_id": latest_run.id if latest_run else None,
+            "latest_run_status": latest_run.status if latest_run else None,
+        }
+
+
+@app.get("/campaigns/{campaign_slug}/admin/runs")
+def list_admin_runs(campaign_slug: str, request: Request) -> list[dict]:
+    _validate_slug(campaign_slug, "campaign")
+    with get_session() as session:
+        campaign = _campaign_for_slug(session, campaign_slug, request)
+        _require_dm(session, campaign.id, request)
+        runs = (
+            session.query(Run, Session)
+            .join(Session, Session.id == Run.session_id)
+            .filter(Run.campaign_id == campaign.id)
+            .order_by(Run.created_at.desc())
+            .all()
+        )
+        return [
+            {
+                "id": run.id,
+                "session_id": run.session_id,
+                "session_slug": session_obj.slug,
+                "status": run.status,
+                "created_at": run.created_at.isoformat(),
+                "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            }
+            for run, session_obj in runs
+        ]
+
+
 @app.get("/campaigns/{campaign_slug}/entities")
 def list_entities(
     campaign_slug: str,

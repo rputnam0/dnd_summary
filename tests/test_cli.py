@@ -125,3 +125,34 @@ def test_doctor_reports_config(db_session):
     assert result.exit_code == 0
     assert "embedding provider" in result.output
     assert "rerank enabled" in result.output
+
+
+def test_verify_cache_reports_cached_tokens(db_session):
+    campaign = create_campaign(db_session, slug="alpha")
+    session_obj = create_session(db_session, campaign=campaign, slug="session_1")
+    run = create_run(db_session, campaign=campaign, session_obj=session_obj, status="completed")
+    create_session_extraction(
+        db_session,
+        run=run,
+        session_obj=session_obj,
+        kind="llm_usage",
+        payload={"cached_content_token_count": 12},
+    )
+    db_session.commit()
+
+    result = runner.invoke(app, ["verify-cache", "alpha", "session_1"])
+
+    assert result.exit_code == 0
+    assert "cached_tokens=12" in result.output
+
+
+def test_resume_partial_dry_run(db_session):
+    campaign = create_campaign(db_session, slug="alpha")
+    session_obj = create_session(db_session, campaign=campaign, slug="session_2")
+    create_run(db_session, campaign=campaign, session_obj=session_obj, status="partial")
+    db_session.commit()
+
+    result = runner.invoke(app, ["resume-partial", "alpha", "session_2", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "Resume dry-run" in result.output

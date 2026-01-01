@@ -5,6 +5,7 @@ from temporalio.worker import Worker
 
 from dnd_summary.activities.extract import extract_session_facts_activity
 from dnd_summary.activities.cache_cleanup import release_transcript_cache_activity
+from dnd_summary.activities.evidence_repair import repair_evidence_activity
 from dnd_summary.activities.persist import persist_session_facts_activity
 from dnd_summary.activities.resolve import resolve_entities_activity
 from dnd_summary.activities.run_status import update_run_status_activity
@@ -15,10 +16,12 @@ from dnd_summary.activities.summary import (
 )
 from dnd_summary.activities.transcripts import ingest_transcript_activity
 from dnd_summary.config import settings
+from dnd_summary.logging_config import setup_logging
 from dnd_summary.workflows.process_session import ProcessSessionWorkflow
 
 
 async def run_worker() -> None:
+    setup_logging()
     client = await Client.connect(
         settings.temporal_address,
         namespace=settings.temporal_namespace,
@@ -30,6 +33,7 @@ async def run_worker() -> None:
         activities=[
             ingest_transcript_activity,
             extract_session_facts_activity,
+            repair_evidence_activity,
             persist_session_facts_activity,
             resolve_entities_activity,
             update_run_status_activity,

@@ -15,6 +15,11 @@ Services:
 - Temporal server: `localhost:7233`
 - Temporal UI: `http://localhost:8080`
 - App Postgres: `localhost:5432` (DB: `dnd_summary`)
+- API service: `http://localhost:8000` (compose `api` service)
+- Worker service: Temporal worker (compose `worker` service)
+
+If you only want infra (no API/worker), run:
+- `docker compose up -d app-postgres temporal temporal-ui temporal-postgres`
 
 ## Python setup (uv)
 
@@ -29,6 +34,11 @@ Use `uv` with `pyproject.toml` (no `requirements.txt`).
 - Run tests:
   - `uv run pytest`
   - Tests run against an in-memory SQLite DB and mock external services; no Postgres/Temporal required.
+
+## Environment config
+
+Create a `.env` file from the sample to configure local defaults:
+- `cp .env.example .env`
 
 ## Database migrations (Alembic)
 
@@ -83,6 +93,12 @@ Use this to map speakers to participants and PCs to character names.
 If Docker/Temporal is not running, you can execute the pipeline in-process:
 - `uv run dnd-summary run-session-local avarias session_54`
 
+Resume a partial run (summary-only):
+- `uv run dnd-summary resume-partial avarias session_54`
+
+Validate transcript cache usage:
+- `uv run dnd-summary verify-cache avarias session_54`
+
 ## Semantic recall (embeddings + Q&A)
 1) Apply migrations:
    - `uv run alembic upgrade head`
@@ -100,6 +116,10 @@ Optional checks:
 Run the API server and open the fantasy UI:
 - `uv run dnd-summary api`
 - Visit `http://127.0.0.1:8000/ui/`
+
+Admin metrics (DM-only when auth is enabled):
+- `GET /campaigns/<campaign_slug>/admin/metrics`
+- `GET /campaigns/<campaign_slug>/admin/runs`
 
 Search tips:
 - Toggle Semantic Search for query expansion (LLM-backed).

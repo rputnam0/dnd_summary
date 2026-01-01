@@ -33,6 +33,9 @@
 - Embeddings storage + semantic retrieval + ask-campaign endpoint
 - Summary variants (player/DM/hooks/NPC changes) + improved DOCX rendering
 - External sources ingestion for character sheets + dice rolls with transcript alignment
+- Shareable app compose services (api/worker) + .env example
+- Evidence repair activity, resume-partial CLI, and cache verification tooling
+- Admin metrics endpoints + structured logging defaults
 
 ## Roadmap (commit-sized)
 
@@ -297,31 +300,31 @@ Suggested default settings (local, RTX 5080-class)
    - Acceptance: combat narration becomes mechanically accurate when logs exist.
 
 ### Phase 10: “Shareable app” ops work (still local-first)
-33) Commit: Add an app service container (API + worker) and tighten Compose
+33) Commit: Add an app service container (API + worker) and tighten Compose (done)
    - Separate services: api, worker, postgres, temporal, temporal-ui.
    - Acceptance: one `docker compose up` can run the full system.
 
-34) Commit: Optional evidence repair activity (feature-flagged)
+34) Commit: Optional evidence repair activity (feature-flagged) (done)
    - Trigger only when quality thresholds fail (e.g., missing spans above a limit).
    - Acceptance: repair step is off by default and lowers missing-span counts when enabled.
 
-35) Commit: Add “resume partial run” CLI command
+35) Commit: Add “resume partial run” CLI command (done)
    - Allow resuming from persisted DB state (e.g., rerun summary plan/write/render only).
    - Acceptance: a `partial` run can be completed without re-running extraction/persist.
 
-36) Commit: Add `.env.example` and tighten local setup docs
+36) Commit: Add `.env.example` and tighten local setup docs (done)
    - Document required env vars and safe defaults for cache TTL + release flags.
    - Acceptance: a new clone can run `uv venv && uv pip install -e ".[dev]"` and `dnd-summary api`.
 
-37) Commit: QA follow-up: ensure partial run status displays when summary fails
+37) Commit: QA follow-up: ensure partial run status displays when summary fails (done)
    - Confirm UI/CLI surfaces `partial` status reliably.
    - Acceptance: `partial` status is visible without manual DB inspection.
 
-38) Commit: Validate explicit transcript caching (if enabled)
+38) Commit: Validate explicit transcript caching (if enabled) (done)
    - Confirm `llm_usage.cached_content_token_count` > 0 on repeated runs.
    - Acceptance: repeated runs show cache hits in usage logs.
 
-39) Commit: Add observability + admin utilities
+39) Commit: Add observability + admin utilities (done)
    - Structured logs, basic metrics, and admin endpoints for data export/deletion.
    - Acceptance: debugging a bad run is possible without reading DB tables directly.
 

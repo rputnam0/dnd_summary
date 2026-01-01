@@ -29,6 +29,14 @@ class ProcessSessionWorkflow:
                 },
                 start_to_close_timeout=timedelta(minutes=10),
             )
+            await workflow.execute_activity(
+                "repair_evidence_activity",
+                {
+                    "run_id": transcript["run_id"],
+                    "session_id": transcript["session_id"],
+                },
+                start_to_close_timeout=timedelta(minutes=2),
+            )
             persisted = await workflow.execute_activity(
                 "persist_session_facts_activity",
                 {

@@ -125,6 +125,25 @@ def test_list_sessions_includes_latest_run(api_client, db_session, settings_over
     assert payload[0]["latest_run_status"] == "completed"
 
 
+def test_list_sessions_surfaces_partial_status(api_client, db_session, settings_overrides):
+    settings_overrides(auth_enabled=True)
+    campaign = create_campaign(db_session, slug="alpha")
+    user = create_user(db_session, display_name="DM")
+    create_membership(db_session, campaign=campaign, user=user, role="dm")
+    session_obj = create_session(db_session, campaign=campaign, slug="session_2")
+    create_run(db_session, campaign=campaign, session_obj=session_obj, status="partial")
+    db_session.commit()
+
+    response = api_client.get(
+        f"/campaigns/{campaign.slug}/sessions",
+        headers=_auth_headers(user.id),
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    payload = response.json()
+    assert payload[0]["latest_run_status"] == "partial"
+
+
 def test_list_entities_returns_entities(api_client, db_session, settings_overrides):
     settings_overrides(auth_enabled=True)
     campaign = create_campaign(db_session, slug="alpha")
@@ -141,3 +160,37 @@ def test_list_entities_returns_entities(api_client, db_session, settings_overrid
     assert response.status_code == status.HTTP_200_OK
     payload = response.json()
     assert payload[0]["name"] == "Goblin"
+
+
+def test_admin_metrics_and_runs_require_dm(api_client, db_session, settings_overrides):
+    settings_overrides(auth_enabled=True)
+    campaign = create_campaign(db_session, slug="alpha")
+    dm_user = create_user(db_session, display_name="DM")
+    player = create_user(db_session, display_name="Player")
+    create_membership(db_session, campaign=campaign, user=dm_user, role="dm")
+    create_membership(db_session, campaign=campaign, user=player, role="player")
+    session_obj = create_session(db_session, campaign=campaign, slug="session_1")
+    create_run(db_session, campaign=campaign, session_obj=session_obj, status="partial")
+    db_session.commit()
+
+    response = api_client.get(
+        f"/campaigns/{campaign.slug}/admin/metrics",
+        headers=_auth_headers(player.id),
+    )
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    response = api_client.get(
+        f"/campaigns/{campaign.slug}/admin/metrics",
+        headers=_auth_headers(dm_user.id),
+    )
+    assert response.status_code == status.HTTP_200_OK
+    payload = response.json()
+    assert payload["runs_by_status"]["partial"] == 1
+
+    response = api_client.get(
+        f"/campaigns/{campaign.slug}/admin/runs",
+        headers=_auth_headers(dm_user.id),
+    )
+    assert response.status_code == status.HTTP_200_OK
+    runs = response.json()
+    assert runs[0]["status"] == "partial"
