@@ -122,7 +122,7 @@ the repo in a working state.
    - All endpoints should reflect corrected names/merges/status; hidden items stay hidden.
    - Acceptance: the dashboard reflects curated truth consistently.
 
-19) Commit: Add UI editing for Entity dossier (rename/alias/merge/hide)
+19) Commit: Add UI editing for Entity dossier (rename/alias/merge/hide) (done)
    - Include guardrails: show affected mentions/events, require confirmation.
    - Acceptance: a DM can clean up a campaign codex without touching the DB manually.
 

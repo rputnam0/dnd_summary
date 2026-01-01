@@ -100,6 +100,21 @@ async function fetchJson(path) {
   return response.json();
 }
 
+async function postJson(path, payload) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
 function clearNode(node) {
   while (node.firstChild) {
     node.removeChild(node.firstChild);
@@ -986,6 +1001,152 @@ async function loadBundle(sessionId, runId) {
   setStatus(`Session loaded. Run ${runShort}.`);
 }
 
+async function refreshAfterCorrection(entityId) {
+  await loadCodex();
+  if (state.selectedSession && state.selectedRun) {
+    await loadBundle(state.selectedSession, state.selectedRun);
+  }
+  const refreshed = (state.campaignEntities || []).find((entity) => entity.id === entityId);
+  if (refreshed) {
+    await openEntity(refreshed);
+  } else {
+    closeEntityPanel();
+  }
+}
+
+async function applyEntityCorrection(entityId, action, payload, closeOnSuccess = false) {
+  setStatus("Saving correction...");
+  try {
+    await postJson(`/entities/${entityId}/corrections`, {
+      action,
+      payload,
+    });
+    setStatus("Correction saved.");
+    if (closeOnSuccess) {
+      await loadCodex();
+      if (state.selectedSession && state.selectedRun) {
+        await loadBundle(state.selectedSession, state.selectedRun);
+      }
+      closeEntityPanel();
+      return;
+    }
+    await refreshAfterCorrection(entityId);
+  } catch (err) {
+    console.error(err);
+    setStatus("Failed to save correction.");
+  }
+}
+
+function buildEntityEditor(detail) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "entity-editor";
+
+  const header = document.createElement("div");
+  header.className = "editor-header";
+  header.innerHTML = "<h4>Corrections</h4><p>Edit names, aliases, or merge/hide entries.</p>";
+  wrapper.appendChild(header);
+
+  const renameRow = document.createElement("div");
+  renameRow.className = "editor-row";
+  const renameLabel = document.createElement("label");
+  renameLabel.textContent = "Rename";
+  const renameInput = document.createElement("input");
+  renameInput.type = "text";
+  renameInput.value = detail.name || "";
+  renameInput.placeholder = "New canonical name";
+  const renameButton = document.createElement("button");
+  renameButton.textContent = "Save";
+  renameButton.addEventListener("click", async () => {
+    const nextName = renameInput.value.trim();
+    if (!nextName) return;
+    await applyEntityCorrection(detail.id, "entity_rename", { name: nextName });
+  });
+  renameRow.append(renameLabel, renameInput, renameButton);
+  wrapper.appendChild(renameRow);
+
+  const aliasRow = document.createElement("div");
+  aliasRow.className = "editor-row";
+  const aliasLabel = document.createElement("label");
+  aliasLabel.textContent = "Alias";
+  const aliasInput = document.createElement("input");
+  aliasInput.type = "text";
+  aliasInput.placeholder = "Add an alias";
+  const aliasButton = document.createElement("button");
+  aliasButton.textContent = "Add";
+  aliasButton.addEventListener("click", async () => {
+    const alias = aliasInput.value.trim();
+    if (!alias) return;
+    aliasInput.value = "";
+    await applyEntityCorrection(detail.id, "entity_alias_add", { alias });
+  });
+  aliasRow.append(aliasLabel, aliasInput, aliasButton);
+  wrapper.appendChild(aliasRow);
+
+  const aliasList = document.createElement("div");
+  aliasList.className = "alias-list";
+  const aliases = detail.aliases || [];
+  if (aliases.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "alias-empty";
+    empty.textContent = "No aliases yet.";
+    aliasList.appendChild(empty);
+  } else {
+    aliases.forEach((alias) => {
+      const chip = document.createElement("div");
+      chip.className = "alias-chip";
+      const label = document.createElement("span");
+      label.textContent = alias;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "Remove";
+      remove.addEventListener("click", async () => {
+        await applyEntityCorrection(detail.id, "entity_alias_remove", { alias });
+      });
+      chip.append(label, remove);
+      aliasList.appendChild(chip);
+    });
+  }
+  wrapper.appendChild(aliasList);
+
+  const mergeRow = document.createElement("div");
+  mergeRow.className = "editor-row";
+  const mergeLabel = document.createElement("label");
+  mergeLabel.textContent = "Merge";
+  const mergeInput = document.createElement("input");
+  mergeInput.type = "text";
+  mergeInput.placeholder = "Target entity ID";
+  const mergeButton = document.createElement("button");
+  mergeButton.textContent = "Merge";
+  mergeButton.addEventListener("click", async () => {
+    const targetId = mergeInput.value.trim();
+    if (!targetId) return;
+    if (!confirm("Merge this entity into another? This hides the current entry.")) {
+      return;
+    }
+    await applyEntityCorrection(detail.id, "entity_merge", { into_id: targetId }, true);
+  });
+  mergeRow.append(mergeLabel, mergeInput, mergeButton);
+  wrapper.appendChild(mergeRow);
+
+  const hideRow = document.createElement("div");
+  hideRow.className = "editor-row";
+  const hideLabel = document.createElement("label");
+  hideLabel.textContent = "Hide";
+  const hideButton = document.createElement("button");
+  hideButton.className = "danger";
+  hideButton.textContent = "Hide Entity";
+  hideButton.addEventListener("click", async () => {
+    if (!confirm("Hide this entity from lists and dashboards?")) {
+      return;
+    }
+    await applyEntityCorrection(detail.id, "entity_hide", {}, true);
+  });
+  hideRow.append(hideLabel, hideButton);
+  wrapper.appendChild(hideRow);
+
+  return wrapper;
+}
+
 async function openEntity(entity) {
   if (!entity || !entity.id) return;
   elements.entityTitle.textContent = entity.name;
@@ -1008,12 +1169,7 @@ async function openEntity(entity) {
       fetchJson(`/entities/${entity.id}/events${suffix}`),
       fetchJson(`/entities/${entity.id}/quotes${suffix}`),
     ]);
-    const aliasText =
-      detail.aliases && detail.aliases.length > 0 ? detail.aliases.join(", ") : "None";
-    const header = document.createElement("div");
-    header.className = "search-item";
-    header.innerHTML = `<strong>Aliases:</strong> ${aliasText}`;
-    elements.entityDetails.appendChild(header);
+    elements.entityDetails.appendChild(buildEntityEditor(detail));
 
     const blocks = [];
     if (mentions.length > 0) {

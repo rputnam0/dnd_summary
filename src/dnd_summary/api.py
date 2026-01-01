@@ -334,6 +334,58 @@ def get_entity(entity_id: str) -> dict:
         }
 
 
+@app.post("/entities/{entity_id}/corrections")
+def create_entity_correction(entity_id: str, payload: dict) -> dict:
+    action = payload.get("action")
+    correction_payload = payload.get("payload") or {}
+    session_id = payload.get("session_id")
+    created_by = payload.get("created_by")
+    allowed_actions = {
+        "entity_rename",
+        "entity_alias_add",
+        "entity_alias_remove",
+        "entity_merge",
+        "entity_hide",
+    }
+    if action not in allowed_actions:
+        raise HTTPException(status_code=400, detail="Unsupported correction action")
+    if action == "entity_rename" and not correction_payload.get("name"):
+        raise HTTPException(status_code=400, detail="Missing name for rename correction")
+    if action in ("entity_alias_add", "entity_alias_remove") and not correction_payload.get(
+        "alias"
+    ):
+        raise HTTPException(status_code=400, detail="Missing alias for correction")
+    if action == "entity_merge" and not correction_payload.get("into_id"):
+        raise HTTPException(status_code=400, detail="Missing merge target id")
+
+    with get_session() as session:
+        entity = session.query(Entity).filter_by(id=entity_id).first()
+        if not entity:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        if session_id:
+            session_obj = session.query(Session).filter_by(id=session_id).first()
+            if not session_obj:
+                raise HTTPException(status_code=404, detail="Session not found")
+            if session_obj.campaign_id != entity.campaign_id:
+                raise HTTPException(status_code=400, detail="Session does not match campaign")
+        correction = Correction(
+            campaign_id=entity.campaign_id,
+            session_id=session_id,
+            target_type="entity",
+            target_id=entity.id,
+            action=action,
+            payload=correction_payload,
+            created_by=created_by,
+        )
+        session.add(correction)
+        session.flush()
+        return {
+            "id": correction.id,
+            "action": correction.action,
+            "target_id": correction.target_id,
+        }
+
+
 @app.get("/entities/{entity_id}/mentions")
 def list_entity_mentions(
     entity_id: str,
