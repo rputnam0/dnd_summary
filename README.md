@@ -28,6 +28,7 @@ Use `uv` with `pyproject.toml` (no `requirements.txt`).
   - `uv run flake8`
 - Run tests:
   - `uv run pytest`
+  - Tests run against an in-memory SQLite DB and mock external services; no Postgres/Temporal required.
 
 ## Database migrations (Alembic)
 

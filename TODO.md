@@ -6,19 +6,8 @@
 - DB schema covers campaigns, sessions, participants, runs, utterances, mentions, entities, scenes, events, threads, quotes, artifacts, and LLM call provenance (success + failure).
 - Read APIs available for campaigns/sessions, entities, scenes, events, threads, quotes, summaries, artifacts, campaign search, and a session bundle endpoint.
 - DSPy eval harness in place with legacy analysis docs used to bootstrap a rough gold set; supports NPC/location/item/faction tasks.
+- Comprehensive pytest suite covers API, CLI, activities, parsing, and cache logic using in-memory SQLite and mocked external services.
 
-## Next commit plan (near-term)
-1) Re-run session_50 end-to-end once Gemini quota resets  
-   - Validate mentions include locations/items referenced in events/threads.  
-   - Confirm quote coverage stays >= min_quotes after cleaning/dedup.
-
-2) Optional evidence repair step  
-   - If evidence gaps persist, add a targeted LLM repair activity for missing spans.  
-   - Gate by feature flag to keep costs low.
-
-3) QA follow-up: ensure partial run status displays when summary fails
-4) Validate explicit transcript caching (if enabled)  
-   - Confirm llm_usage includes cached_content_token_count > 0 on repeated runs.
 
 ## Recently completed
 - Entity-centric API endpoints (`/entities/{entity_id}/mentions|quotes|events`)
@@ -39,6 +28,8 @@
 - Idempotent transcript ingest for re-runs (reuse or replace utterances)
 - Summary quote validation tightened to enforce quote bank grounding
 - Mention span repair regex fixed for multi-token mentions
+- Player notes + bookmarks scoping fix for authenticated requests
+- Comprehensive pytest suite for API/CLI/activities/parsing
 
 ## Roadmap (commit-sized)
 
@@ -189,11 +180,27 @@ the repo in a working state.
    - Separate services: api, worker, postgres, temporal, temporal-ui.
    - Acceptance: one `docker compose up` can run the full system.
 
-34) Commit: Add a minimal test suite for invariants
-   - Evidence span validity, quote integrity, transcript parsing, corrections application.
-   - Acceptance: `uv run pytest` passes and catches regressions in evidence contracts.
+34) Commit: Optional evidence repair activity (feature-flagged)
+   - Trigger only when quality thresholds fail (e.g., missing spans above a limit).
+   - Acceptance: repair step is off by default and lowers missing-span counts when enabled.
 
-35) Commit: Add observability + admin utilities
+35) Commit: Add “resume partial run” CLI command
+   - Allow resuming from persisted DB state (e.g., rerun summary plan/write/render only).
+   - Acceptance: a `partial` run can be completed without re-running extraction/persist.
+
+36) Commit: Add `.env.example` and tighten local setup docs
+   - Document required env vars and safe defaults for cache TTL + release flags.
+   - Acceptance: a new clone can run `uv venv && uv pip install -e ".[dev]"` and `dnd-summary api`.
+
+37) Commit: QA follow-up: ensure partial run status displays when summary fails
+   - Confirm UI/CLI surfaces `partial` status reliably.
+   - Acceptance: `partial` status is visible without manual DB inspection.
+
+38) Commit: Validate explicit transcript caching (if enabled)
+   - Confirm `llm_usage.cached_content_token_count` > 0 on repeated runs.
+   - Acceptance: repeated runs show cache hits in usage logs.
+
+39) Commit: Add observability + admin utilities
    - Structured logs, basic metrics, and admin endpoints for data export/deletion.
    - Acceptance: debugging a bad run is possible without reading DB tables directly.
 

@@ -59,11 +59,22 @@ Dependency management:
 - Lint/format with Flake8 and Black.
 
 ## Testing Guidelines
-- No formal test suite yet.
-- If you add tests, place them under `tests/` and use `pytest` conventions:
+- Tests live under `tests/` and use `pytest` conventions:
   - Files: `tests/test_*.py`
   - Test functions: `test_*`
-- All tests must pass before merging a feature.
+- Run the suite with `uv run pytest` (uses in-memory SQLite + mocked external services to exercise API, CLI, and activity logic without Postgres/Temporal).
+- All tests must pass before every commit and before merging a feature.
+- Coverage map (high-level):
+  - `tests/test_api_*.py`: FastAPI endpoints, auth scoping, corrections, and core API behaviors.
+  - `tests/test_cli.py`: CLI outputs for config, cache inspection, and usage reporting.
+  - `tests/test_activities_*.py`: Temporal activity helpers and side effects (transcripts, cache cleanup, resolve, summary, run status).
+  - `tests/test_transcripts.py`: transcript parsing for supported formats.
+  - `tests/test_transcript_format.py`: transcript formatting and utterance-id mapping.
+  - `tests/test_llm_cache.py`: cache logic and usage accounting.
+  - `tests/test_mappings.py`: character/participant mapping.
+  - `tests/test_run_steps.py`: run step lifecycle bookkeeping.
+  - `tests/test_render.py`: DOCX rendering output.
+  - `tests/test_campaign_config.py`: campaign config parsing and alias maps.
 
 ## Commit & Pull Request Guidelines
 - Initialize a git repo and commit after each reasonable feature implementation.
