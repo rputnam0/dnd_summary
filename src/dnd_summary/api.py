@@ -10,6 +10,8 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_
 from sqlalchemy.orm import joinedload
+import tempfile
+import zipfile
 
 from dnd_summary.config import settings
 from dnd_summary.db import get_session
@@ -1289,6 +1291,50 @@ def get_summary(
         return {"text": summary.payload.get("text", "")}
 
 
+@app.get("/sessions/{session_id}/export")
+def export_session(session_id: str) -> FileResponse:
+    with get_session() as session:
+        session_obj = session.query(Session).filter_by(id=session_id).first()
+        if not session_obj:
+            raise HTTPException(status_code=404, detail="Session not found")
+        artifacts = (
+            session.query(Artifact)
+            .filter_by(session_id=session_id)
+            .order_by(Artifact.created_at.asc())
+            .all()
+        )
+        utterances = (
+            session.query(Utterance)
+            .filter_by(session_id=session_id)
+            .order_by(Utterance.start_ms.asc(), Utterance.id.asc())
+            .all()
+        )
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as handle:
+            zip_path = Path(handle.name)
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            if utterances:
+                transcript_path = Path(f"session_{session_id}") / "utterances.txt"
+                transcript_text = "\n".join(
+                    f"{utt.start_ms}\t{utt.end_ms}\t{utt.participant_id}\t{utt.text}"
+                    for utt in utterances
+                )
+                archive.writestr(str(transcript_path), transcript_text)
+            for artifact in artifacts:
+                artifact_path = Path(artifact.path)
+                if not artifact_path.is_absolute():
+                    artifact_path = Path(settings.artifacts_root) / artifact.path
+                if artifact_path.exists():
+                    archive.write(
+                        artifact_path,
+                        arcname=str(Path("artifacts") / artifact_path.name),
+                    )
+        return FileResponse(
+            zip_path,
+            filename=f"session_{session_id}_export.zip",
+            media_type="application/zip",
+        )
+
+
 @app.get("/sessions/{session_id}/runs")
 def list_runs(session_id: str) -> list[dict]:
     with get_session() as session:
@@ -1387,6 +1433,30 @@ def set_current_run(session_id: str, run_id: str) -> dict:
             raise HTTPException(status_code=404, detail="Session not found")
         session_obj.current_run_id = run.id
         return {"session_id": session_id, "current_run_id": run.id}
+
+
+@app.delete("/sessions/{session_id}")
+def delete_session(session_id: str) -> dict:
+    with get_session() as session:
+        session_obj = session.query(Session).filter_by(id=session_id).first()
+        if not session_obj:
+            raise HTTPException(status_code=404, detail="Session not found")
+        run_ids = [run.id for run in session.query(Run).filter_by(session_id=session_id).all()]
+        session.query(Artifact).filter_by(session_id=session_id).delete()
+        session.query(SessionExtraction).filter_by(session_id=session_id).delete()
+        session.query(LLMCall).filter_by(session_id=session_id).delete()
+        session.query(Quote).filter_by(session_id=session_id).delete()
+        session.query(Event).filter_by(session_id=session_id).delete()
+        session.query(Scene).filter_by(session_id=session_id).delete()
+        session.query(ThreadUpdate).filter_by(session_id=session_id).delete()
+        session.query(Thread).filter_by(session_id=session_id).delete()
+        session.query(EntityMention).filter_by(session_id=session_id).delete()
+        session.query(Mention).filter_by(session_id=session_id).delete()
+        session.query(Utterance).filter_by(session_id=session_id).delete()
+        session.query(Run).filter_by(session_id=session_id).delete()
+        session.delete(session_obj)
+
+        return {"session_id": session_id, "deleted_runs": len(run_ids)}
 
 
 @app.get("/utterances")

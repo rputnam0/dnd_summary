@@ -96,7 +96,7 @@ the repo in a working state.
    - Include: run status, step statuses, last LLM call, latest artifacts.
    - Acceptance: UI can update without page refresh while a run is executing.
 
-13) Commit: Add delete/export primitives (local-first privacy controls)
+13) Commit: Add delete/export primitives (local-first privacy controls) (done)
    - `DELETE /sessions/{id}` (DB + artifacts) and `GET /sessions/{id}/export` (zip).
    - Acceptance: users can remove sensitive data and export for backup.
 
