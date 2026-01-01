@@ -158,6 +158,11 @@ button:hover {
   transform: translateY(-1px);
 }
 
+button.danger {
+  background: linear-gradient(135deg, #d9534f, #b13c37);
+  color: #f9efe9;
+}
+
 .toggle {
   display: flex;
   align-items: center;

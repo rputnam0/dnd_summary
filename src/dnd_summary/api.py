@@ -653,6 +653,49 @@ def list_quotes(
         ]
 
 
+@app.post("/redactions")
+def create_redaction(payload: dict) -> dict:
+    target_type = payload.get("target_type")
+    target_id = payload.get("target_id")
+    reason = payload.get("reason")
+    created_by = payload.get("created_by")
+    if target_type not in {"utterance", "quote"}:
+        raise HTTPException(status_code=400, detail="Unsupported redaction target type")
+    if not target_id:
+        raise HTTPException(status_code=400, detail="Missing redaction target id")
+    with get_session() as session:
+        if target_type == "utterance":
+            utterance = session.query(Utterance).filter_by(id=target_id).first()
+            if not utterance:
+                raise HTTPException(status_code=404, detail="Utterance not found")
+            session_obj = session.query(Session).filter_by(id=utterance.session_id).first()
+            if not session_obj:
+                raise HTTPException(status_code=404, detail="Session not found")
+            campaign_id = session_obj.campaign_id
+            session_id = utterance.session_id
+        else:
+            quote = session.query(Quote).filter_by(id=target_id).first()
+            if not quote:
+                raise HTTPException(status_code=404, detail="Quote not found")
+            session_obj = session.query(Session).filter_by(id=quote.session_id).first()
+            if not session_obj:
+                raise HTTPException(status_code=404, detail="Session not found")
+            campaign_id = session_obj.campaign_id
+            session_id = quote.session_id
+        correction = Correction(
+            campaign_id=campaign_id,
+            session_id=session_id,
+            target_type=target_type,
+            target_id=target_id,
+            action="redact",
+            payload={"reason": reason} if reason else None,
+            created_by=created_by,
+        )
+        session.add(correction)
+        session.flush()
+        return {"id": correction.id, "target_id": correction.target_id}
+
+
 @app.get("/campaigns/{campaign_slug}/search")
 def search_campaign(
     campaign_slug: str,
@@ -1638,6 +1681,15 @@ def export_session(session_id: str) -> FileResponse:
             .order_by(Utterance.start_ms.asc(), Utterance.id.asc())
             .all()
         )
+        utterance_corrections = _load_corrections(
+            session,
+            session_obj.campaign_id,
+            session_id,
+            "utterance",
+        )
+        redacted_utterances = _redacted_ids(utterance_corrections)
+        if redacted_utterances:
+            utterances = [utt for utt in utterances if utt.id not in redacted_utterances]
         with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as handle:
             zip_path = Path(handle.name)
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:

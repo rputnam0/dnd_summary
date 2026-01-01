@@ -130,7 +130,7 @@ the repo in a working state.
    - Include evidence display + link to supporting events/quotes.
    - Acceptance: quest state becomes “video game reliable”.
 
-21) Commit: Add redaction workflow (privacy + spoiler management)
+21) Commit: Add redaction workflow (privacy + spoiler management) (done)
    - Redact utterances/quotes/notes; ensure exports respect redactions.
    - Acceptance: the UI can be player-facing without leaking private table talk.
 

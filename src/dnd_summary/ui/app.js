@@ -502,6 +502,14 @@ function renderQuotes(quotes) {
       openEvidence(`Quote: ${quote.speaker || "Unknown"}`, evidence)
     );
     card.appendChild(button);
+    const redactButton = document.createElement("button");
+    redactButton.type = "button";
+    redactButton.className = "danger";
+    redactButton.textContent = "Redact quote";
+    redactButton.addEventListener("click", () =>
+      applyRedaction("quote", quote.id, "this quote")
+    );
+    card.appendChild(redactButton);
     elements.quoteList.appendChild(card);
   });
 }
@@ -963,6 +971,14 @@ async function openEvidence(title, evidence) {
       const range = `${formatTimecode(utt.start_ms)} - ${formatTimecode(utt.end_ms)}`;
       meta.textContent = [timecode, range].filter(Boolean).join(" • ");
       item.appendChild(meta);
+      const redact = document.createElement("button");
+      redact.type = "button";
+      redact.className = "danger";
+      redact.textContent = "Redact utterance";
+      redact.addEventListener("click", () =>
+        applyRedaction("utterance", utt.id, "this utterance")
+      );
+      item.appendChild(redact);
       elements.evidenceDetails.appendChild(item);
     });
   } catch (err) {
@@ -1190,6 +1206,28 @@ async function applyThreadCorrection(threadId, action, payload, closeOnSuccess =
   } catch (err) {
     console.error(err);
     setStatus("Failed to save correction.");
+  }
+}
+
+async function applyRedaction(targetType, targetId, label) {
+  const message = label ? `Redact ${label}?` : "Redact this item?";
+  if (!confirm(message)) {
+    return;
+  }
+  setStatus("Saving redaction...");
+  try {
+    await postJson("/redactions", {
+      target_type: targetType,
+      target_id: targetId,
+    });
+    setStatus("Redaction saved.");
+    if (state.selectedSession && state.selectedRun) {
+      await loadBundle(state.selectedSession, state.selectedRun);
+    }
+    closeEvidencePanel();
+  } catch (err) {
+    console.error(err);
+    setStatus("Failed to save redaction.");
   }
 }
 
