@@ -20,6 +20,7 @@ from dnd_summary.mappings import load_character_map
 from dnd_summary.models import (
     Artifact,
     Campaign,
+    Correction,
     Entity,
     EntityAlias,
     Event,
@@ -51,6 +52,108 @@ if UI_ROOT.exists():
 def _validate_slug(value: str, label: str) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", value):
         raise HTTPException(status_code=400, detail=f"Invalid {label} slug")
+
+
+def _load_corrections(
+    session,
+    campaign_id: str,
+    session_id: str | None = None,
+    target_type: str | None = None,
+) -> list[Correction]:
+    query = session.query(Correction).filter(Correction.campaign_id == campaign_id)
+    if session_id is not None:
+        query = query.filter(or_(Correction.session_id.is_(None), Correction.session_id == session_id))
+    else:
+        query = query.filter(Correction.session_id.is_(None))
+    if target_type:
+        query = query.filter(Correction.target_type == target_type)
+    return query.order_by(Correction.created_at.asc(), Correction.id.asc()).all()
+
+
+def _entity_correction_maps(corrections: list[Correction]) -> tuple[set[str], dict[str, str], dict[str, str]]:
+    hidden_ids: set[str] = set()
+    merge_map: dict[str, str] = {}
+    rename_map: dict[str, str] = {}
+    for correction in corrections:
+        payload = correction.payload or {}
+        if correction.action in ("hide", "entity_hide"):
+            hidden_ids.add(correction.target_id)
+            continue
+        if correction.action in ("merge", "entity_merge"):
+            merge_target = payload.get("into_id") or payload.get("target_id")
+            if merge_target:
+                merge_map[correction.target_id] = merge_target
+            hidden_ids.add(correction.target_id)
+            continue
+        if correction.action in ("rename", "entity_rename"):
+            new_name = payload.get("name") or payload.get("canonical_name")
+            if new_name:
+                rename_map[correction.target_id] = new_name
+    return hidden_ids, merge_map, rename_map
+
+
+def _entity_alias_changes(
+    corrections: list[Correction],
+    entity_id: str,
+) -> tuple[set[str], set[str]]:
+    adds: set[str] = set()
+    removes: set[str] = set()
+    for correction in corrections:
+        if correction.target_id != entity_id:
+            continue
+        payload = correction.payload or {}
+        if correction.action in ("alias_add", "entity_alias_add"):
+            alias = payload.get("alias")
+            if alias:
+                adds.add(alias)
+        if correction.action in ("alias_remove", "entity_alias_remove"):
+            alias = payload.get("alias")
+            if alias:
+                removes.add(alias)
+    return adds, removes
+
+
+def _thread_correction_maps(
+    corrections: list[Correction],
+) -> tuple[set[str], dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
+    hidden_ids: set[str] = set()
+    merge_map: dict[str, str] = {}
+    title_map: dict[str, str] = {}
+    status_map: dict[str, str] = {}
+    summary_map: dict[str, str] = {}
+    for correction in corrections:
+        payload = correction.payload or {}
+        if correction.action in ("hide", "thread_hide"):
+            hidden_ids.add(correction.target_id)
+            continue
+        if correction.action in ("merge", "thread_merge"):
+            merge_target = payload.get("into_id") or payload.get("target_id")
+            if merge_target:
+                merge_map[correction.target_id] = merge_target
+            hidden_ids.add(correction.target_id)
+            continue
+        if correction.action in ("rename", "thread_rename", "title_update"):
+            new_title = payload.get("title") or payload.get("name")
+            if new_title:
+                title_map[correction.target_id] = new_title
+            continue
+        if correction.action in ("status_update", "thread_status"):
+            new_status = payload.get("status")
+            if new_status:
+                status_map[correction.target_id] = new_status
+            continue
+        if correction.action in ("summary_update", "thread_summary"):
+            if "summary" in payload:
+                summary_map[correction.target_id] = payload.get("summary")
+    return hidden_ids, merge_map, title_map, status_map, summary_map
+
+
+def _redacted_ids(corrections: list[Correction]) -> set[str]:
+    redacted: set[str] = set()
+    for correction in corrections:
+        if correction.action in ("redact", "redaction", "redact_text"):
+            redacted.add(correction.target_id)
+    return redacted
 
 
 @app.get("/", include_in_schema=False)
@@ -135,6 +238,8 @@ def list_entities(campaign_slug: str) -> list[dict]:
         campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
         if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
+        corrections = _load_corrections(session, campaign.id, None, "entity")
+        hidden_ids, merge_map, rename_map = _entity_correction_maps(corrections)
         entities = (
             session.query(Entity)
             .filter_by(campaign_id=campaign.id)
@@ -144,11 +249,12 @@ def list_entities(campaign_slug: str) -> list[dict]:
         return [
             {
                 "id": e.id,
-                "name": e.canonical_name,
+                "name": rename_map.get(e.id, e.canonical_name),
                 "type": e.entity_type,
                 "description": e.description,
             }
             for e in entities
+            if e.id not in hidden_ids and e.id not in merge_map
         ]
 
 
@@ -206,18 +312,25 @@ def get_entity(entity_id: str) -> dict:
         entity = session.query(Entity).filter_by(id=entity_id).first()
         if not entity:
             raise HTTPException(status_code=404, detail="Entity not found")
+        corrections = _load_corrections(session, entity.campaign_id, None, "entity")
+        hidden_ids, merge_map, rename_map = _entity_correction_maps(corrections)
+        if entity.id in hidden_ids or entity.id in merge_map:
+            raise HTTPException(status_code=404, detail="Entity not found")
         aliases = (
             session.query(EntityAlias)
             .filter_by(entity_id=entity.id)
             .order_by(EntityAlias.alias.asc())
             .all()
         )
+        alias_adds, alias_removes = _entity_alias_changes(corrections, entity.id)
+        alias_list = [alias.alias for alias in aliases if alias.alias not in alias_removes]
+        alias_list.extend(sorted(alias_adds))
         return {
             "id": entity.id,
-            "name": entity.canonical_name,
+            "name": rename_map.get(entity.id, entity.canonical_name),
             "type": entity.entity_type,
             "description": entity.description,
-            "aliases": [alias.alias for alias in aliases],
+            "aliases": alias_list,
         }
 
 
@@ -230,6 +343,10 @@ def list_entity_mentions(
     with get_session() as session:
         entity = session.query(Entity).filter_by(id=entity_id).first()
         if not entity:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        corrections = _load_corrections(session, entity.campaign_id, None, "entity")
+        hidden_ids, merge_map, _ = _entity_correction_maps(corrections)
+        if entity.id in hidden_ids or entity.id in merge_map:
             raise HTTPException(status_code=404, detail="Entity not found")
         run_ids = _resolve_entity_run_ids(session, entity, session_id, run_id)
         query = (
@@ -265,6 +382,10 @@ def list_entity_events(
     with get_session() as session:
         entity = session.query(Entity).filter_by(id=entity_id).first()
         if not entity:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        corrections = _load_corrections(session, entity.campaign_id, None, "entity")
+        hidden_ids, merge_map, _ = _entity_correction_maps(corrections)
+        if entity.id in hidden_ids or entity.id in merge_map:
             raise HTTPException(status_code=404, detail="Entity not found")
         run_ids = _resolve_entity_run_ids(session, entity, session_id, run_id)
         query = session.query(Event).filter(Event.run_id.in_(run_ids))
@@ -304,6 +425,19 @@ def list_entity_quotes(
         entity = session.query(Entity).filter_by(id=entity_id).first()
         if not entity:
             raise HTTPException(status_code=404, detail="Entity not found")
+        corrections = _load_corrections(session, entity.campaign_id, None, "entity")
+        hidden_ids, merge_map, _ = _entity_correction_maps(corrections)
+        if entity.id in hidden_ids or entity.id in merge_map:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        quote_corrections = _load_corrections(session, entity.campaign_id, session_id, "quote")
+        utterance_corrections = _load_corrections(
+            session,
+            entity.campaign_id,
+            session_id,
+            "utterance",
+        )
+        redacted_quotes = _redacted_ids(quote_corrections)
+        redacted_utterances = _redacted_ids(utterance_corrections)
         run_ids = _resolve_entity_run_ids(session, entity, session_id, run_id)
         mentions = (
             session.query(Mention)
@@ -344,6 +478,7 @@ def list_entity_quotes(
                 "display_text": _quote_display_text(q, utterance_lookup),
             }
             for q in quotes
+            if q.id not in redacted_quotes and q.utterance_id not in redacted_utterances
         ]
 
 
@@ -353,6 +488,11 @@ def list_session_entities(
     run_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
     with get_session() as session:
+        session_obj = session.query(Session).filter_by(id=session_id).first()
+        if not session_obj:
+            raise HTTPException(status_code=404, detail="Session not found")
+        corrections = _load_corrections(session, session_obj.campaign_id, session_id, "entity")
+        hidden_ids, merge_map, rename_map = _entity_correction_maps(corrections)
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
         entities = (
             session.query(Entity)
@@ -365,11 +505,12 @@ def list_session_entities(
         return [
             {
                 "id": e.id,
-                "name": e.canonical_name,
+                "name": rename_map.get(e.id, e.canonical_name),
                 "type": e.entity_type,
                 "description": e.description,
             }
             for e in entities
+            if e.id not in hidden_ids and e.id not in merge_map
         ]
 
 
@@ -379,6 +520,11 @@ def list_mentions(
     run_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
     with get_session() as session:
+        session_obj = session.query(Session).filter_by(id=session_id).first()
+        if not session_obj:
+            raise HTTPException(status_code=404, detail="Session not found")
+        corrections = _load_corrections(session, session_obj.campaign_id, session_id, "entity")
+        hidden_ids, merge_map, rename_map = _entity_correction_maps(corrections)
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
         mentions = (
             session.query(Mention, Entity)
@@ -396,9 +542,19 @@ def list_mentions(
                 "description": mention.description,
                 "evidence": mention.evidence,
                 "confidence": mention.confidence,
-                "entity_id": entity.id if entity else None,
-                "entity_name": entity.canonical_name if entity else None,
-                "entity_type_resolved": entity.entity_type if entity else None,
+                "entity_id": (
+                    entity.id if entity and entity.id not in hidden_ids and entity.id not in merge_map else None
+                ),
+                "entity_name": (
+                    rename_map.get(entity.id, entity.canonical_name)
+                    if entity and entity.id not in hidden_ids and entity.id not in merge_map
+                    else None
+                ),
+                "entity_type_resolved": (
+                    entity.entity_type
+                    if entity and entity.id not in hidden_ids and entity.id not in merge_map
+                    else None
+                ),
             }
             for mention, entity in mentions
         ]
@@ -410,6 +566,18 @@ def list_quotes(
     run_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
     with get_session() as session:
+        session_obj = session.query(Session).filter_by(id=session_id).first()
+        if not session_obj:
+            raise HTTPException(status_code=404, detail="Session not found")
+        quote_corrections = _load_corrections(session, session_obj.campaign_id, session_id, "quote")
+        utterance_corrections = _load_corrections(
+            session,
+            session_obj.campaign_id,
+            session_id,
+            "utterance",
+        )
+        redacted_quotes = _redacted_ids(quote_corrections)
+        redacted_utterances = _redacted_ids(utterance_corrections)
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
         quotes = (
             session.query(Quote)
@@ -429,6 +597,7 @@ def list_quotes(
                 "display_text": _quote_display_text(q, utterance_lookup),
             }
             for q in quotes
+            if q.id not in redacted_quotes and q.utterance_id not in redacted_utterances
         ]
 
 
@@ -447,6 +616,19 @@ def search_campaign(
         run_ids = None
         if not include_all_runs:
             run_ids = _latest_run_ids_for_campaign(session, campaign.id)
+        thread_corrections = _load_corrections(session, campaign.id, session_id, "thread")
+        hidden_threads, merge_threads, title_map, status_map, summary_map = _thread_correction_maps(
+            thread_corrections
+        )
+        quote_corrections = _load_corrections(session, campaign.id, session_id, "quote")
+        utterance_corrections = _load_corrections(
+            session,
+            campaign.id,
+            session_id,
+            "utterance",
+        )
+        redacted_quotes = _redacted_ids(quote_corrections)
+        redacted_utterances = _redacted_ids(utterance_corrections)
 
         dialect = session.bind.dialect.name if session.bind else "unknown"
         if dialect == "postgresql":
@@ -739,12 +921,16 @@ def semantic_search_campaign(
             {
                 "id": t.id,
                 "session_id": t.session_id,
-                "title": t.title,
-                "summary": t.summary,
-                "status": t.status,
-                "score": _score_terms(f"{t.title} {t.summary or ''}", terms),
+                "title": title_map.get(t.id, t.title),
+                "summary": summary_map.get(t.id, t.summary),
+                "status": status_map.get(t.id, t.status),
+                "score": _score_terms(
+                    f"{title_map.get(t.id, t.title)} {summary_map.get(t.id, t.summary) or ''}",
+                    terms,
+                ),
             }
             for t in threads_raw
+            if t.id not in hidden_threads and t.id not in merge_threads
         ]
         updates = [
             {
@@ -755,6 +941,7 @@ def semantic_search_campaign(
                 "score": _score_terms(u.note or "", terms),
             }
             for u in updates_raw
+            if u.thread_id not in hidden_threads and u.thread_id not in merge_threads
         ]
         quotes = [
             {
@@ -767,6 +954,7 @@ def semantic_search_campaign(
                 "score": _score_terms(f"{q.clean_text or ''} {q.note or ''}", terms),
             }
             for q in quotes_raw
+            if q.id not in redacted_quotes and q.utterance_id not in redacted_utterances
         ]
         utterances = [
             {
@@ -779,6 +967,7 @@ def semantic_search_campaign(
                 "score": _score_terms(u.text, terms),
             }
             for u in utterances_raw
+            if u.id not in redacted_utterances
         ]
 
         mentions.sort(key=lambda item: item["score"], reverse=True)
@@ -863,6 +1052,13 @@ def list_threads(
     run_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
     with get_session() as session:
+        session_obj = session.query(Session).filter_by(id=session_id).first()
+        if not session_obj:
+            raise HTTPException(status_code=404, detail="Session not found")
+        corrections = _load_corrections(session, session_obj.campaign_id, session_id, "thread")
+        hidden_ids, merge_map, title_map, status_map, summary_map = _thread_correction_maps(
+            corrections
+        )
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
         threads = (
             session.query(Thread)
@@ -892,16 +1088,17 @@ def list_threads(
             {
                 "id": t.id,
                 "campaign_thread_id": t.campaign_thread_id,
-                "title": t.title,
+                "title": title_map.get(t.id, t.title),
                 "kind": t.kind,
-                "status": t.status,
-                "summary": t.summary,
+                "status": status_map.get(t.id, t.status),
+                "summary": summary_map.get(t.id, t.summary),
                 "evidence": t.evidence,
                 "confidence": t.confidence,
                 "created_at": t.created_at.isoformat(),
                 "updates": updates_by_thread.get(t.id, []),
             }
             for t in threads
+            if t.id not in hidden_ids and t.id not in merge_map
         ]
 
 
@@ -1087,6 +1284,14 @@ def list_thread_mentions(thread_id: str) -> list[dict]:
         thread = session.query(Thread).filter_by(id=thread_id).first()
         if not thread:
             raise HTTPException(status_code=404, detail="Thread not found")
+        run = session.query(Run).filter_by(id=thread.run_id).first()
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        corrections = _load_corrections(session, run.campaign_id, thread.session_id, "thread")
+        hidden_ids, merge_map, title_map, _, _ = _thread_correction_maps(corrections)
+        if thread.id in hidden_ids or thread.id in merge_map:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        thread_title = title_map.get(thread.id, thread.title)
         updates = session.query(ThreadUpdate).filter_by(thread_id=thread_id).all()
 
         utterance_ids = set()
@@ -1120,7 +1325,7 @@ def list_thread_mentions(thread_id: str) -> list[dict]:
         if results:
             return results
 
-        tokens = _thread_title_tokens(thread.title)
+        tokens = _thread_title_tokens(thread_title)
         if not tokens:
             return results
         for mention in mentions:
@@ -1145,6 +1350,23 @@ def list_thread_quotes(thread_id: str) -> list[dict]:
         thread = session.query(Thread).filter_by(id=thread_id).first()
         if not thread:
             raise HTTPException(status_code=404, detail="Thread not found")
+        run = session.query(Run).filter_by(id=thread.run_id).first()
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        corrections = _load_corrections(session, run.campaign_id, thread.session_id, "thread")
+        hidden_ids, merge_map, title_map, _, _ = _thread_correction_maps(corrections)
+        if thread.id in hidden_ids or thread.id in merge_map:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        quote_corrections = _load_corrections(session, run.campaign_id, thread.session_id, "quote")
+        utterance_corrections = _load_corrections(
+            session,
+            run.campaign_id,
+            thread.session_id,
+            "utterance",
+        )
+        redacted_quotes = _redacted_ids(quote_corrections)
+        redacted_utterances = _redacted_ids(utterance_corrections)
+        thread_title = title_map.get(thread.id, thread.title)
         updates = session.query(ThreadUpdate).filter_by(thread_id=thread_id).all()
 
         utterance_ids = set()
@@ -1156,7 +1378,7 @@ def list_thread_quotes(thread_id: str) -> list[dict]:
         utterance_ids |= _thread_event_utterance_ids(session, thread, related_event_ids)
 
         if not utterance_ids:
-            tokens = _thread_title_tokens(thread.title)
+            tokens = _thread_title_tokens(thread_title)
             if not tokens:
                 return []
             utterances = (
@@ -1218,6 +1440,7 @@ def list_thread_quotes(thread_id: str) -> list[dict]:
                 "display_text": _quote_display_text(q, utterance_lookup),
             }
             for q in quotes
+            if q.id not in redacted_quotes and q.utterance_id not in redacted_utterances
         ]
 
 
@@ -1476,6 +1699,18 @@ def list_utterances(
         if ids:
             query = query.filter(Utterance.id.in_(ids))
         utterances = query.all()
+        redacted_by_session: dict[str, set[str]] = {}
+        for utter_session_id in {utt.session_id for utt in utterances}:
+            session_obj = session.query(Session).filter_by(id=utter_session_id).first()
+            if not session_obj:
+                continue
+            corrections = _load_corrections(
+                session,
+                session_obj.campaign_id,
+                utter_session_id,
+                "utterance",
+            )
+            redacted_by_session[utter_session_id] = _redacted_ids(corrections)
         return [
             {
                 "id": utt.id,
@@ -1486,6 +1721,7 @@ def list_utterances(
                 "text": utt.text,
             }
             for utt in utterances
+            if utt.id not in redacted_by_session.get(utt.session_id, set())
         ]
 
 
@@ -1494,6 +1730,17 @@ def get_utterance(utterance_id: str) -> dict:
     with get_session() as session:
         utterance = session.query(Utterance).filter_by(id=utterance_id).first()
         if not utterance:
+            raise HTTPException(status_code=404, detail="Utterance not found")
+        session_obj = session.query(Session).filter_by(id=utterance.session_id).first()
+        if not session_obj:
+            raise HTTPException(status_code=404, detail="Session not found")
+        corrections = _load_corrections(
+            session,
+            session_obj.campaign_id,
+            utterance.session_id,
+            "utterance",
+        )
+        if utterance.id in _redacted_ids(corrections):
             raise HTTPException(status_code=404, detail="Utterance not found")
         return {
             "id": utterance.id,
@@ -1515,6 +1762,10 @@ def list_campaign_threads(
         campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
         if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
+        corrections = _load_corrections(session, campaign.id, None, "thread")
+        hidden_ids, merge_map, title_map, status_map, summary_map = _thread_correction_maps(
+            corrections
+        )
 
         run_ids = None
         if not include_all_runs:
@@ -1527,8 +1778,6 @@ def list_campaign_threads(
         )
         if run_ids is not None:
             query = query.filter(Thread.run_id.in_(run_ids))
-        if status:
-            query = query.filter(Thread.status == status)
         threads = query.order_by(Session.session_number.asc().nulls_last(), Thread.created_at.asc()).all()
 
         updates = (
@@ -1546,16 +1795,23 @@ def list_campaign_threads(
 
         latest_by_title: dict[str, dict] = {}
         for thread, sess in threads:
-            key = thread.campaign_thread_id or " ".join((thread.title or "").lower().split())
+            if thread.id in hidden_ids or thread.id in merge_map:
+                continue
+            thread_title = title_map.get(thread.id, thread.title)
+            thread_status = status_map.get(thread.id, thread.status)
+            thread_summary = summary_map.get(thread.id, thread.summary)
+            if status and thread_status != status:
+                continue
+            key = thread.campaign_thread_id or " ".join((thread_title or "").lower().split())
             if not key:
                 continue
             entry = {
                 "id": thread.id,
                 "campaign_thread_id": thread.campaign_thread_id,
-                "title": thread.title,
+                "title": thread_title,
                 "kind": thread.kind,
-                "status": thread.status,
-                "summary": thread.summary,
+                "status": thread_status,
+                "summary": thread_summary,
                 "session_id": thread.session_id,
                 "session_slug": sess.slug,
                 "session_number": sess.session_number,
@@ -1590,6 +1846,26 @@ def get_session_bundle(
     with get_session() as session:
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
         run = session.query(Run).filter_by(id=resolved_run_id).first()
+        session_obj = session.query(Session).filter_by(id=session_id).first()
+        if not session_obj:
+            raise HTTPException(status_code=404, detail="Session not found")
+        entity_corrections = _load_corrections(session, session_obj.campaign_id, session_id, "entity")
+        thread_corrections = _load_corrections(session, session_obj.campaign_id, session_id, "thread")
+        quote_corrections = _load_corrections(session, session_obj.campaign_id, session_id, "quote")
+        utterance_corrections = _load_corrections(
+            session,
+            session_obj.campaign_id,
+            session_id,
+            "utterance",
+        )
+        hidden_entities, merge_entities, rename_entities = _entity_correction_maps(
+            entity_corrections
+        )
+        hidden_threads, merge_threads, title_map, status_map, summary_map = _thread_correction_maps(
+            thread_corrections
+        )
+        redacted_quotes = _redacted_ids(quote_corrections)
+        redacted_utterances = _redacted_ids(utterance_corrections)
 
         summary = (
             session.query(SessionExtraction)
@@ -1639,6 +1915,8 @@ def get_session_bundle(
             .order_by(Utterance.start_ms.asc(), Utterance.id.asc())
             .all()
         )
+        if redacted_utterances:
+            utterances = [utt for utt in utterances if utt.id not in redacted_utterances]
         transcript_lines: list[str] = []
         utterance_timecodes: dict[str, str] = {}
         if utterances and run:
@@ -1756,6 +2034,7 @@ def get_session_bundle(
                     "display_text": _quote_display_text(q, utterance_lookup),
                 }
                 for q in quotes
+                if q.id not in redacted_quotes and q.utterance_id not in redacted_utterances
             ],
             "scenes": [
                 {
@@ -1787,25 +2066,27 @@ def get_session_bundle(
                 {
                     "id": t.id,
                     "campaign_thread_id": t.campaign_thread_id,
-                    "title": t.title,
+                    "title": title_map.get(t.id, t.title),
                     "kind": t.kind,
-                    "status": t.status,
-                    "summary": t.summary,
+                    "status": status_map.get(t.id, t.status),
+                    "summary": summary_map.get(t.id, t.summary),
                     "evidence": t.evidence,
                     "confidence": t.confidence,
                     "created_at": t.created_at.isoformat(),
                     "updates": updates_by_thread.get(t.id, []),
                 }
                 for t in threads
+                if t.id not in hidden_threads and t.id not in merge_threads
             ],
             "entities": [
                 {
                     "id": e.id,
-                    "name": e.canonical_name,
+                    "name": rename_entities.get(e.id, e.canonical_name),
                     "type": e.entity_type,
                     "description": e.description,
                 }
                 for e in entities
+                if e.id not in hidden_entities and e.id not in merge_entities
             ],
         }
 

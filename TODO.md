@@ -118,7 +118,7 @@ the repo in a working state.
    - Store edits as events: entity rename/merge/hide, alias add/remove; thread status/title merge; redactions.
    - Acceptance: corrections are persisted, reversible, and attributed (even if “local_user” initially).
 
-18) Commit: Apply corrections in read paths (API + UI)
+18) Commit: Apply corrections in read paths (API + UI) (done)
    - All endpoints should reflect corrected names/merges/status; hidden items stay hidden.
    - Acceptance: the dashboard reflects curated truth consistently.
 
