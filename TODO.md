@@ -126,7 +126,7 @@ the repo in a working state.
    - Include guardrails: show affected mentions/events, require confirmation.
    - Acceptance: a DM can clean up a campaign codex without touching the DB manually.
 
-20) Commit: Add UI editing for Quest journal (status + summary + merge)
+20) Commit: Add UI editing for Quest journal (status + summary + merge) (done)
    - Include evidence display + link to supporting events/quotes.
    - Acceptance: quest state becomes “video game reliable”.
 

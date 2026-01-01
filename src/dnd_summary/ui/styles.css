@@ -721,6 +721,21 @@ button:hover {
   font-family: "Source Sans 3", sans-serif;
 }
 
+.editor-row select,
+.editor-row textarea {
+  flex: 1 1 220px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(207, 174, 88, 0.3);
+  background: rgba(6, 8, 10, 0.9);
+  color: var(--ink);
+  font-family: "Source Sans 3", sans-serif;
+}
+
+.editor-row textarea {
+  resize: vertical;
+}
+
 .entity-editor button {
   padding: 8px 12px;
   border-radius: 999px;

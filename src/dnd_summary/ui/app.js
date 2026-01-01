@@ -54,6 +54,11 @@ const elements = {
   entityMeta: document.getElementById("entityMeta"),
   entityDetails: document.getElementById("entityDetails"),
   closeEntity: document.getElementById("closeEntity"),
+  threadPanel: document.getElementById("threadPanel"),
+  threadTitle: document.getElementById("threadTitle"),
+  threadMeta: document.getElementById("threadMeta"),
+  threadDetails: document.getElementById("threadDetails"),
+  closeThread: document.getElementById("closeThread"),
   evidencePanel: document.getElementById("evidencePanel"),
   evidenceTitle: document.getElementById("evidenceTitle"),
   evidenceMeta: document.getElementById("evidenceMeta"),
@@ -580,6 +585,11 @@ function renderQuestJournal(threads) {
       });
       card.appendChild(updates);
     }
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.textContent = "Edit quest";
+    editButton.addEventListener("click", () => openThread(thread));
+    card.appendChild(editButton);
     if (thread.session_id) {
       const button = document.createElement("button");
       button.type = "button";
@@ -1147,6 +1157,129 @@ function buildEntityEditor(detail) {
   return wrapper;
 }
 
+async function refreshAfterThreadCorrection(threadId) {
+  await loadQuestJournal();
+  if (state.selectedSession && state.selectedRun) {
+    await loadBundle(state.selectedSession, state.selectedRun);
+  }
+  const refreshed = (state.questThreads || []).find((thread) => thread.id === threadId);
+  if (refreshed) {
+    openThread(refreshed);
+  } else {
+    closeThreadPanel();
+  }
+}
+
+async function applyThreadCorrection(threadId, action, payload, closeOnSuccess = false) {
+  setStatus("Saving correction...");
+  try {
+    await postJson(`/threads/${threadId}/corrections`, {
+      action,
+      payload,
+    });
+    setStatus("Correction saved.");
+    if (closeOnSuccess) {
+      await loadQuestJournal();
+      if (state.selectedSession && state.selectedRun) {
+        await loadBundle(state.selectedSession, state.selectedRun);
+      }
+      closeThreadPanel();
+      return;
+    }
+    await refreshAfterThreadCorrection(threadId);
+  } catch (err) {
+    console.error(err);
+    setStatus("Failed to save correction.");
+  }
+}
+
+function buildThreadEditor(thread) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "entity-editor";
+
+  const header = document.createElement("div");
+  header.className = "editor-header";
+  header.innerHTML = "<h4>Quest Controls</h4><p>Update status, title, summary, or merge quests.</p>";
+  wrapper.appendChild(header);
+
+  const titleRow = document.createElement("div");
+  titleRow.className = "editor-row";
+  const titleLabel = document.createElement("label");
+  titleLabel.textContent = "Title";
+  const titleInput = document.createElement("input");
+  titleInput.type = "text";
+  titleInput.value = thread.title || "";
+  titleInput.placeholder = "Quest title";
+  const titleButton = document.createElement("button");
+  titleButton.textContent = "Save";
+  titleButton.addEventListener("click", async () => {
+    const nextTitle = titleInput.value.trim();
+    if (!nextTitle) return;
+    await applyThreadCorrection(thread.id, "thread_title", { title: nextTitle });
+  });
+  titleRow.append(titleLabel, titleInput, titleButton);
+  wrapper.appendChild(titleRow);
+
+  const statusRow = document.createElement("div");
+  statusRow.className = "editor-row";
+  const statusLabel = document.createElement("label");
+  statusLabel.textContent = "Status";
+  const statusSelect = document.createElement("select");
+  ["active", "proposed", "completed", "blocked", "failed", "abandoned"].forEach((status) => {
+    const option = document.createElement("option");
+    option.value = status;
+    option.textContent = status;
+    statusSelect.appendChild(option);
+  });
+  statusSelect.value = thread.status || "active";
+  const statusButton = document.createElement("button");
+  statusButton.textContent = "Save";
+  statusButton.addEventListener("click", async () => {
+    const nextStatus = statusSelect.value;
+    await applyThreadCorrection(thread.id, "thread_status", { status: nextStatus });
+  });
+  statusRow.append(statusLabel, statusSelect, statusButton);
+  wrapper.appendChild(statusRow);
+
+  const summaryRow = document.createElement("div");
+  summaryRow.className = "editor-row";
+  const summaryLabel = document.createElement("label");
+  summaryLabel.textContent = "Summary";
+  const summaryInput = document.createElement("textarea");
+  summaryInput.rows = 4;
+  summaryInput.value = thread.summary || "";
+  summaryInput.placeholder = "Update quest summary";
+  const summaryButton = document.createElement("button");
+  summaryButton.textContent = "Save";
+  summaryButton.addEventListener("click", async () => {
+    await applyThreadCorrection(thread.id, "thread_summary", { summary: summaryInput.value });
+  });
+  summaryRow.append(summaryLabel, summaryInput, summaryButton);
+  wrapper.appendChild(summaryRow);
+
+  const mergeRow = document.createElement("div");
+  mergeRow.className = "editor-row";
+  const mergeLabel = document.createElement("label");
+  mergeLabel.textContent = "Merge";
+  const mergeInput = document.createElement("input");
+  mergeInput.type = "text";
+  mergeInput.placeholder = "Target thread ID";
+  const mergeButton = document.createElement("button");
+  mergeButton.textContent = "Merge";
+  mergeButton.addEventListener("click", async () => {
+    const targetId = mergeInput.value.trim();
+    if (!targetId) return;
+    if (!confirm("Merge this quest into another?")) {
+      return;
+    }
+    await applyThreadCorrection(thread.id, "thread_merge", { into_id: targetId }, true);
+  });
+  mergeRow.append(mergeLabel, mergeInput, mergeButton);
+  wrapper.appendChild(mergeRow);
+
+  return wrapper;
+}
+
 async function openEntity(entity) {
   if (!entity || !entity.id) return;
   elements.entityTitle.textContent = entity.name;
@@ -1211,8 +1344,21 @@ async function openEntity(entity) {
   }
 }
 
+function openThread(thread) {
+  if (!thread || !thread.id) return;
+  elements.threadTitle.textContent = thread.title || "Quest";
+  elements.threadMeta.textContent = thread.status || "active";
+  clearNode(elements.threadDetails);
+  elements.threadPanel.classList.remove("hidden");
+  elements.threadDetails.appendChild(buildThreadEditor(thread));
+}
+
 function closeEntityPanel() {
   elements.entityPanel.classList.add("hidden");
+}
+
+function closeThreadPanel() {
+  elements.threadPanel.classList.add("hidden");
 }
 
 function buildSearchBlock(title, items, renderFn) {
@@ -1387,6 +1533,7 @@ async function init() {
   });
   elements.closeSearch.addEventListener("click", closeSearch);
   elements.closeEntity.addEventListener("click", closeEntityPanel);
+  elements.closeThread.addEventListener("click", closeThreadPanel);
   elements.closeEvidence.addEventListener("click", closeEvidencePanel);
   elements.searchPanel.addEventListener("click", (event) => {
     if (event.target === elements.searchPanel) {
@@ -1396,6 +1543,11 @@ async function init() {
   elements.entityPanel.addEventListener("click", (event) => {
     if (event.target === elements.entityPanel) {
       closeEntityPanel();
+    }
+  });
+  elements.threadPanel.addEventListener("click", (event) => {
+    if (event.target === elements.threadPanel) {
+      closeThreadPanel();
     }
   });
   elements.evidencePanel.addEventListener("click", (event) => {

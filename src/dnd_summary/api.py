@@ -132,7 +132,7 @@ def _thread_correction_maps(
                 merge_map[correction.target_id] = merge_target
             hidden_ids.add(correction.target_id)
             continue
-        if correction.action in ("rename", "thread_rename", "title_update"):
+        if correction.action in ("rename", "thread_rename", "thread_title", "title_update"):
             new_title = payload.get("title") or payload.get("name")
             if new_title:
                 title_map[correction.target_id] = new_title
@@ -1152,6 +1152,59 @@ def list_threads(
             for t in threads
             if t.id not in hidden_ids and t.id not in merge_map
         ]
+
+
+@app.post("/threads/{thread_id}/corrections")
+def create_thread_correction(thread_id: str, payload: dict) -> dict:
+    action = payload.get("action")
+    correction_payload = payload.get("payload") or {}
+    session_id = payload.get("session_id")
+    created_by = payload.get("created_by")
+    allowed_actions = {
+        "thread_status",
+        "thread_title",
+        "thread_summary",
+        "thread_merge",
+        "thread_hide",
+    }
+    if action not in allowed_actions:
+        raise HTTPException(status_code=400, detail="Unsupported correction action")
+    if action == "thread_status" and not correction_payload.get("status"):
+        raise HTTPException(status_code=400, detail="Missing status for correction")
+    if action == "thread_title" and not correction_payload.get("title"):
+        raise HTTPException(status_code=400, detail="Missing title for correction")
+    if action == "thread_merge" and not correction_payload.get("into_id"):
+        raise HTTPException(status_code=400, detail="Missing merge target id")
+
+    with get_session() as session:
+        thread = session.query(Thread).filter_by(id=thread_id).first()
+        if not thread:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        run = session.query(Run).filter_by(id=thread.run_id).first()
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        if session_id:
+            session_obj = session.query(Session).filter_by(id=session_id).first()
+            if not session_obj:
+                raise HTTPException(status_code=404, detail="Session not found")
+            if session_obj.campaign_id != run.campaign_id:
+                raise HTTPException(status_code=400, detail="Session does not match campaign")
+        correction = Correction(
+            campaign_id=run.campaign_id,
+            session_id=session_id,
+            target_type="thread",
+            target_id=thread.id,
+            action=action,
+            payload=correction_payload,
+            created_by=created_by,
+        )
+        session.add(correction)
+        session.flush()
+        return {
+            "id": correction.id,
+            "action": correction.action,
+            "target_id": correction.target_id,
+        }
 
 
 def _utterance_ids_from_evidence(entries: list[dict] | None) -> set[str]:
