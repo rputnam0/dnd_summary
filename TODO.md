@@ -84,7 +84,7 @@ the repo in a working state.
    - Support `transcript.jsonl|txt|srt` upload into canonical `transcripts/**` layout.
    - Acceptance: UI can create/update a session’s transcript without manual filesystem work.
 
-10) Commit: Add API endpoint to start a workflow run from the UI
+10) Commit: Add API endpoint to start a workflow run from the UI (done)
    - `POST /campaigns/{campaign}/sessions/{session}/runs` starts Temporal workflow (or local mode).
    - Acceptance: UI can start processing and receive `run_id`.
 

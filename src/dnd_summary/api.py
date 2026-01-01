@@ -36,6 +36,7 @@ from dnd_summary.models import (
 )
 from dnd_summary.schema_genai import semantic_search_schema
 from dnd_summary.transcript_format import format_transcript
+from dnd_summary.workflows.process_session import ProcessSessionWorkflow
 
 
 app = FastAPI(title="DND Summary API", version="0.0.0")
@@ -176,6 +177,25 @@ async def upload_transcript(
         raise HTTPException(status_code=400, detail="Empty transcript")
     dest_path.write_bytes(content)
     return {"path": str(dest_path), "bytes": len(content)}
+
+
+@app.post("/campaigns/{campaign_slug}/sessions/{session_slug}/runs")
+async def start_session_run(campaign_slug: str, session_slug: str) -> dict:
+    _validate_slug(campaign_slug, "campaign")
+    _validate_slug(session_slug, "session")
+    from temporalio.client import Client
+
+    client = await Client.connect(
+        settings.temporal_address,
+        namespace=settings.temporal_namespace,
+    )
+    handle = await client.start_workflow(
+        ProcessSessionWorkflow.run,
+        {"campaign_slug": campaign_slug, "session_slug": session_slug},
+        id=f"process-session:{campaign_slug}:{session_slug}",
+        task_queue=settings.temporal_task_queue,
+    )
+    return {"workflow_id": handle.id, "run_id": handle.run_id}
 
 
 @app.get("/entities/{entity_id}")
