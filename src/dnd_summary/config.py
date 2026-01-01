@@ -42,6 +42,20 @@ class Settings(BaseSettings):
     embedding_dimensions: int = 768
     embedding_version: str = "v1"
     embedding_batch_size: int = 48
+    embedding_device: str = "cpu"
+    embedding_max_length: int = 8192
+    embedding_normalize: bool = True
+
+    rerank_enabled: bool = False
+    rerank_provider: str = "hash"
+    rerank_model: str = "BAAI/bge-reranker-large"
+    rerank_device: str = "cpu"
+    rerank_batch_size: int = 32
+    rerank_max_length: int = 512
+
+    semantic_dense_top_k: int = 100
+    semantic_rerank_top_k: int = 50
+    semantic_final_k: int = 15
 
 
 settings = Settings()

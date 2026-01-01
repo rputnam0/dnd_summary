@@ -106,8 +106,10 @@ def create_utterance(
     start_ms: int = 0,
     end_ms: int = 1000,
     text: str = "Hello",
+    utterance_id: str | None = None,
 ):
     utterance = Utterance(
+        id=utterance_id,
         session_id=session_obj.id,
         participant_id=participant.id,
         start_ms=start_ms,
@@ -391,6 +393,9 @@ def create_embedding(
     run_id: str | None = None,
     model: str = "text-embedding-004",
     version: str = "v1",
+    provider: str | None = None,
+    dimensions: int | None = None,
+    normalized: bool | None = None,
 ):
     row = Embedding(
         campaign_id=campaign.id,
@@ -402,6 +407,9 @@ def create_embedding(
         embedding=embedding,
         model=model,
         version=version,
+        provider=provider,
+        dimensions=dimensions,
+        normalized=normalized,
     )
     session.add(row)
     session.flush()

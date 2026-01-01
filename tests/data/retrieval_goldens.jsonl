@@ -1,0 +1,2 @@
+{"query": "goblin ambush", "expected_utterance_ids": ["utt-1"]}
+{"query": "lost relic", "expected_utterance_ids": ["utt-2"]}

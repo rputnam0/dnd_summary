@@ -30,6 +30,7 @@
 - Mention span repair regex fixed for multi-token mentions
 - Player notes + bookmarks scoping fix for authenticated requests
 - Comprehensive pytest suite for API/CLI/activities/parsing
+- Embeddings storage + semantic retrieval + ask-campaign endpoint
 
 ## Roadmap (commit-sized)
 
@@ -144,7 +145,16 @@ the repo in a working state.
    - Per-session “spoiler until session N” tagging for threads/entities/events; filter per player.
    - Acceptance: campaign stays playable for late-joining players.
 
-### Phase 7: Real semantic recall (embeddings + grounded Q&A)
+### Phase 7: Real semantic recall (embeddings + rerank + grounded Q&A)
+Model choices (local, well-documented path)
+- Embedding model: BAAI/bge-m3
+  - High-quality dense retrieval model suitable for both query→span retrieval and higher-level objects (scenes/entities).
+  - Practical benefit: one model covers short spans and longer text (useful since you embed utterances/events/scenes/entities).
+- Reranker: BAAI/bge-reranker-large
+  - Cross-encoder reranker used for “rerank top-K candidates” after vector search.
+  - Biggest quality improvement per unit effort for English-only corpora.
+
+What’s already done (keep as-is)
 26) Commit: Add embeddings storage + vector index (pgvector)
    - Store vectors for utterances/events/scenes/entities with versioning.
    - Acceptance: semantic search works even when exact terms differ.
@@ -156,6 +166,115 @@ the repo in a working state.
 28) Commit: Add “Ask the campaign” Q&A endpoint (DM and player modes)
    - DM mode can use hidden context; player mode must respect spoiler/redaction filters.
    - Acceptance: answers include quoted evidence and links to timeline/scene context.
+
+Updated Phase 7 additions (bite-size commits)
+29) Commit: Add local HF embedding provider (bge-m3) (done)
+   - Goal: replace the hash embedding provider for real runs while keeping hash for CI/tests.
+   - Scope:
+     - New provider in `src/dnd_summary/embeddings.py` (or `providers/embeddings_hf.py`)
+     - Loads BAAI/bge-m3
+     - GPU/CPU device selection
+     - Batching + deterministic normalization
+     - Config additions:
+       - `EMBEDDING_PROVIDER=hf|hash`
+       - `EMBEDDING_MODEL=BAAI/bge-m3`
+       - `EMBEDDING_BATCH_SIZE`, `EMBEDDING_DEVICE`, `EMBEDDING_MAX_LENGTH`
+   - Acceptance:
+     - `build-embeddings <campaign>` runs locally and produces non-hash vectors.
+     - Embeddings are stable between runs (same text → same vector).
+
+30) Commit: Add embedding metadata + compatibility checks (done)
+   - Goal: make re-indexing and migrations safe when you change models/settings.
+   - Scope:
+     - Ensure embeddings rows store (if not already): `model_name`, `provider`, `dims`, `normalize`, `text_hash`, `created_at`
+     - Add “index compatibility check” in `embedding_index.py`:
+       - Refuse to mix embeddings with different dims/model unless explicitly forced (`--rebuild`).
+   - Acceptance:
+     - Running `build-embeddings` on an already-indexed campaign does the right thing:
+       - skip unchanged text
+       - rebuild on model mismatch only when requested
+
+31) Commit: Add reranker provider abstraction (local HF + test stub) (done)
+   - Goal: introduce reranking without entangling it with endpoints.
+   - Scope:
+     - New module: `src/dnd_summary/rerank.py`
+     - Interface: `rerank(query, candidates[{id, text, dense_score, evidence_span...}])`
+     - Providers:
+       - `HFRerankerProvider` (model=BAAI/bge-reranker-large, device, batch_size, max_length=512)
+       - `HashRerankerProvider` for deterministic CI/unit tests
+   - Acceptance:
+     - Unit tests validate reranking deterministically with the hash provider.
+
+32) Commit: Integrate reranking into `/semantic_retrieve` (done)
+   - Goal: improve match quality while preserving “always returns evidence spans.”
+   - Scope:
+     - Retrieval flow becomes:
+       - pgvector dense search returns `dense_top_k` candidates (e.g., 100)
+       - Apply mode filters (player spoiler/redaction) and any structural filters
+       - Rerank remaining candidates (top `rerank_top_k`, e.g., 50)
+       - Return final k (e.g., 15)
+     - Response payload adds:
+       - `rerank_score`
+       - `scores: {dense, rerank}`
+     - Keep evidence spans and transcript citations unchanged.
+   - Config:
+     - `RERANK_ENABLED=true|false`
+     - `RERANK_MODEL=BAAI/bge-reranker-large`
+     - `SEMANTIC_DENSE_TOP_K`, `SEMANTIC_RERANK_TOP_K`, `SEMANTIC_FINAL_K`
+   - Acceptance:
+     - With rerank enabled, ordering changes on a known test set while evidence spans/citations remain valid.
+
+33) Commit: Integrate reranking into `/ask` (DM/player-safe) (done)
+   - Goal: ensure reranker never “sees” forbidden content in player mode.
+   - Scope:
+     - Enforce ordering: filter before rerank (player mode)
+     - DM mode can include hidden context
+     - Rerank only evidence-span texts (recommended) rather than whole scene blobs:
+       - minimizes truncation issues (512-token reranker window)
+       - improves precision for citations
+   - Acceptance:
+     - Player-mode regression test: DM-only evidence cannot influence reranked results.
+
+34) Commit: CLI + docs updates for “production mode” (done)
+   - Goal: make it easy to run locally with the new stack.
+   - Scope:
+     - Update `dnd-summary build-embeddings` to accept/print:
+       - provider/model/device/batch/dims
+     - Add `dnd-summary doctor` (optional but small) to validate:
+       - pgvector extension present
+       - embedding/rerank models load on GPU
+       - index exists for campaign
+     - Update README/runbook:
+       - “Apply migration → build embeddings → verify semantic retrieve → ask”
+   - Acceptance:
+     - A clean “getting started” path produces high-quality retrieval locally.
+
+35) Commit: Evaluation harness (small, pragmatic) (done)
+   - Goal: prevent silent quality regressions.
+   - Scope:
+     - Add a tiny goldens file: `tests/data/retrieval_goldens.jsonl`
+     - query → expected evidence span IDs (or “must include one of these”)
+     - Tests assert:
+       - top-N includes expected evidence
+       - citations point to real transcript spans
+       - rerank improves or matches baseline on a minimal set
+   - Acceptance:
+     - CI catches retrieval regressions when chunking, embeddings, or reranking changes.
+
+Suggested default settings (local, RTX 5080-class)
+- `EMBEDDING_PROVIDER=hf`
+- `EMBEDDING_MODEL=BAAI/bge-m3`
+- `EMBEDDING_DEVICE=cuda`
+- `EMBEDDING_BATCH_SIZE=64`
+- `RERANK_ENABLED=true`
+- `RERANK_PROVIDER=hf`
+- `RERANK_MODEL=BAAI/bge-reranker-large`
+- `RERANK_DEVICE=cuda`
+- `RERANK_BATCH_SIZE=32`
+- `RERANK_MAX_LENGTH=512`
+- `SEMANTIC_DENSE_TOP_K=100`
+- `SEMANTIC_RERANK_TOP_K=50`
+- `SEMANTIC_FINAL_K=15`
 
 ### Phase 8: Narrative outputs (more than one recap)
 29) Commit: Summary variants

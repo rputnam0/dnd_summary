@@ -15,7 +15,7 @@ from tests.factories import (
 
 
 def test_semantic_retrieve_returns_evidence(api_client, db_session, settings_overrides):
-    settings_overrides(embedding_dimensions=8)
+    settings_overrides(embedding_dimensions=8, rerank_enabled=True, rerank_provider="hash")
     campaign = create_campaign(db_session, slug="alpha")
     session_obj = create_session(db_session, campaign=campaign)
     run = create_run(db_session, campaign=campaign, session_obj=session_obj)
@@ -47,6 +47,7 @@ def test_semantic_retrieve_returns_evidence(api_client, db_session, settings_ove
     assert payload["results"]
     assert payload["results"][0]["evidence"]
     assert payload["evidence_utterances"]
+    assert payload["results"][0]["scores"]["rerank"] is not None
 
 
 def test_ask_campaign_returns_llm_answer(

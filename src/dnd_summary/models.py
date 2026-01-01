@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     JSON,
     BigInteger,
     DateTime,
@@ -489,9 +490,13 @@ class Embedding(Base):
     target_type: Mapped[str] = mapped_column(String, nullable=False)
     target_id: Mapped[str] = mapped_column(String, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    text_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     embedding: Mapped[list[float]] = mapped_column(EmbeddingVector, nullable=False)
     model: Mapped[str] = mapped_column(String, nullable=False)
     version: Mapped[str] = mapped_column(String, nullable=False)
+    provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    dimensions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    normalized: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (

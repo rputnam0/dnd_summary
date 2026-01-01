@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 
 import typer
+from sqlalchemy import text
 
 from dnd_summary.config import settings
 
@@ -181,6 +182,7 @@ def build_embeddings(
     session_slug: str | None = None,
     include_all_runs: bool = False,
     replace: bool = False,
+    rebuild: bool = False,
 ) -> None:
     """Generate semantic embeddings for campaign content."""
     from dnd_summary.db import get_session
@@ -200,16 +202,75 @@ def build_embeddings(
             )
             if not session_obj:
                 raise SystemExit("Session not found.")
-        stats = build_embeddings_for_campaign(
-            session,
-            campaign.id,
-            session_id=session_obj.id if session_obj else None,
-            include_all_runs=include_all_runs,
-            replace=replace,
+        try:
+            stats = build_embeddings_for_campaign(
+                session,
+                campaign.id,
+                session_id=session_obj.id if session_obj else None,
+                include_all_runs=include_all_runs,
+                replace=replace,
+                rebuild=rebuild,
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        typer.echo(
+            "embeddings created={created} skipped={skipped} deleted={deleted}".format(
+                **stats.__dict__
+            )
         )
         typer.echo(
-            f"embeddings created={stats.created} skipped={stats.skipped} deleted={stats.deleted}"
+            "provider={provider} model={model} device={device} dims={dims} normalize={normalize}".format(
+                provider=settings.embedding_provider,
+                model=settings.embedding_model,
+                device=settings.embedding_device,
+                dims=settings.embedding_dimensions,
+                normalize=settings.embedding_normalize,
+            )
         )
+
+
+@app.command()
+def doctor(load_models: bool = False) -> None:
+    """Validate embedding/rerank configuration and storage backends."""
+    from dnd_summary.db import get_session
+    from dnd_summary.embeddings import _get_provider
+    from dnd_summary.rerank import _get_reranker
+
+    with get_session() as session:
+        dialect = session.bind.dialect.name if session.bind else "unknown"
+        if dialect == "postgresql":
+            result = session.execute(
+                text("SELECT extname FROM pg_extension WHERE extname='vector'")
+            ).fetchone()
+            if result:
+                typer.echo("pgvector=ok")
+            else:
+                typer.echo("pgvector=missing")
+        else:
+            typer.echo(f"pgvector=skip (dialect={dialect})")
+
+    typer.echo(
+        "embedding provider={provider} model={model} device={device} dims={dims}".format(
+            provider=settings.embedding_provider,
+            model=settings.embedding_model,
+            device=settings.embedding_device,
+            dims=settings.embedding_dimensions,
+        )
+    )
+    typer.echo(
+        "rerank enabled={enabled} provider={provider} model={model} device={device}".format(
+            enabled=settings.rerank_enabled,
+            provider=settings.rerank_provider,
+            model=settings.rerank_model,
+            device=settings.rerank_device,
+        )
+    )
+
+    if load_models:
+        _get_provider()
+        if settings.rerank_enabled:
+            _get_reranker()
+        typer.echo("models=loaded")
 
 
 def _resolve_latest_run(session, session_id: str, run_id: str | None) -> Run:

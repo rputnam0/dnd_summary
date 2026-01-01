@@ -117,3 +117,11 @@ def test_build_embeddings_command(db_session, settings_overrides):
     assert result.exit_code == 0
     assert "embeddings" in result.output
     assert db_session.query(Embedding).filter_by(campaign_id=campaign.id).count() > 0
+
+
+def test_doctor_reports_config(db_session):
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "embedding provider" in result.output
+    assert "rerank enabled" in result.output

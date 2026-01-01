@@ -18,6 +18,7 @@ from dnd_summary.db import get_session
 from dnd_summary.embeddings import cosine_similarity, embed_texts
 from dnd_summary.llm import LLMClient
 from dnd_summary.mappings import load_character_map
+from dnd_summary.rerank import RerankCandidate, rerank
 from dnd_summary.models import (
     Artifact,
     Campaign,
@@ -1544,7 +1545,7 @@ def semantic_retrieve_campaign(
     campaign_slug: str,
     request: Request,
     q: str = Query(..., min_length=2),
-    top_k: Annotated[int, Query()] = 20,
+    top_k: Annotated[int, Query()] = settings.semantic_final_k,
     include_all_runs: Annotated[bool, Query()] = False,
     session_id: Annotated[str | None, Query()] = None,
 ) -> dict:
@@ -1560,11 +1561,12 @@ def semantic_retrieve_campaign(
 
         embeddings: list[Embedding] = []
         dialect = session.bind.dialect.name if session.bind else "unknown"
+        dense_top_k = max(settings.semantic_dense_top_k, top_k)
         if dialect == "postgresql":
             distance = Embedding.embedding.op("<->")(query_vector)
             embeddings = (
                 embedding_query.order_by(distance.asc())
-                .limit(top_k * 4)
+                .limit(dense_top_k)
                 .all()
             )
         else:
@@ -1574,7 +1576,7 @@ def semantic_retrieve_campaign(
                 for entry in candidates
             ]
             scored.sort(key=lambda item: item[1], reverse=True)
-            embeddings = [entry for entry, _score in scored[: top_k * 4]]
+            embeddings = [entry for entry, _score in scored[:dense_top_k]]
 
         if not embeddings:
             return {"query": q, "results": [], "missing_embeddings": True}
@@ -1663,7 +1665,7 @@ def semantic_retrieve_campaign(
                         "description": entity.description,
                         "evidence": evidence,
                         "content": entry.content,
-                        "score": cosine_similarity(entry.embedding or [], query_vector),
+                        "dense_score": cosine_similarity(entry.embedding or [], query_vector),
                     }
                 )
                 continue
@@ -1686,7 +1688,7 @@ def semantic_retrieve_campaign(
                         "summary": event.summary,
                         "evidence": evidence,
                         "content": entry.content,
-                        "score": cosine_similarity(entry.embedding or [], query_vector),
+                        "dense_score": cosine_similarity(entry.embedding or [], query_vector),
                     }
                 )
                 continue
@@ -1707,7 +1709,7 @@ def semantic_retrieve_campaign(
                         "summary": scene.summary,
                         "evidence": evidence,
                         "content": entry.content,
-                        "score": cosine_similarity(entry.embedding or [], query_vector),
+                        "dense_score": cosine_similarity(entry.embedding or [], query_vector),
                     }
                 )
                 continue
@@ -1731,7 +1733,7 @@ def semantic_retrieve_campaign(
                         "status": status_map.get(thread.id, thread.status),
                         "evidence": evidence,
                         "content": entry.content,
-                        "score": cosine_similarity(entry.embedding or [], query_vector),
+                        "dense_score": cosine_similarity(entry.embedding or [], query_vector),
                     }
                 )
                 continue
@@ -1757,7 +1759,7 @@ def semantic_retrieve_campaign(
                         ),
                         "evidence": evidence,
                         "content": entry.content,
-                        "score": cosine_similarity(entry.embedding or [], query_vector),
+                        "dense_score": cosine_similarity(entry.embedding or [], query_vector),
                     }
                 )
                 continue
@@ -1778,12 +1780,12 @@ def semantic_retrieve_campaign(
                         "text": utt.text,
                         "evidence": evidence,
                         "content": entry.content,
-                        "score": cosine_similarity(entry.embedding or [], query_vector),
+                        "dense_score": cosine_similarity(entry.embedding or [], query_vector),
                     }
                 )
 
-        scored.sort(key=lambda item: item["score"], reverse=True)
-        scored = scored[:top_k]
+        scored.sort(key=lambda item: item["dense_score"], reverse=True)
+        scored = scored[: max(settings.semantic_rerank_top_k, top_k)]
 
         evidence_utterance_ids: set[str] = set()
         for item in scored:
@@ -1794,6 +1796,46 @@ def semantic_retrieve_campaign(
             for utt_id, text in utterance_text_lookup.items()
             if utt_id not in redacted_utterances
         }
+
+        if settings.rerank_enabled and scored:
+            candidates: list[RerankCandidate] = []
+            for item in scored[: settings.semantic_rerank_top_k]:
+                evidence_texts = []
+                for span in item.get("evidence", []):
+                    utterance_id = span.get("utterance_id")
+                    if not utterance_id:
+                        continue
+                    text = evidence_utterances.get(utterance_id)
+                    if text:
+                        evidence_texts.append(text)
+                if not evidence_texts:
+                    continue
+                candidates.append(
+                    RerankCandidate(
+                        candidate_id=str(item.get("id")),
+                        text="\n".join(evidence_texts),
+                        dense_score=item["dense_score"],
+                        payload=item,
+                    )
+                )
+            reranked = rerank(q, candidates)
+            rerank_map = {candidate.candidate_id: score for candidate, score in reranked}
+            for item in scored:
+                rerank_score = rerank_map.get(str(item.get("id")))
+                item["rerank_score"] = rerank_score
+                item["scores"] = {"dense": item["dense_score"], "rerank": rerank_score}
+            scored.sort(
+                key=lambda item: (
+                    item.get("rerank_score") is None,
+                    -(item.get("rerank_score") or 0.0),
+                )
+            )
+        else:
+            for item in scored:
+                item["rerank_score"] = None
+                item["scores"] = {"dense": item["dense_score"], "rerank": None}
+
+        scored = scored[:top_k]
 
         return {
             "query": q,

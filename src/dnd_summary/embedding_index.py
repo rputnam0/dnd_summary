@@ -4,10 +4,10 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from dnd_summary.config import settings
-from dnd_summary.embeddings import EmbeddingInput, embed_texts
+from dnd_summary.embeddings import EmbeddingInput, embed_texts, text_hash
 from dnd_summary.models import (
     Embedding,
     Entity,
@@ -199,23 +199,73 @@ def _collect_embedding_inputs(
     return inputs
 
 
+def _embedding_signature() -> tuple[str, str, str, int, bool]:
+    return (
+        settings.embedding_provider,
+        settings.embedding_model,
+        settings.embedding_version,
+        settings.embedding_dimensions,
+        settings.embedding_normalize,
+    )
+
+
+def _validate_embedding_compatibility(
+    session,
+    campaign_id: str,
+    session_id: str | None,
+    rebuild: bool,
+) -> None:
+    if rebuild:
+        return
+    query = session.query(
+        Embedding.provider,
+        Embedding.model,
+        Embedding.version,
+        Embedding.dimensions,
+        Embedding.normalized,
+    ).filter(Embedding.campaign_id == campaign_id)
+    if session_id:
+        query = query.filter(
+            (Embedding.session_id == session_id) | (Embedding.session_id.is_(None))
+        )
+    rows = query.distinct().all()
+    if not rows:
+        return
+    expected_provider, expected_model, expected_version, expected_dims, expected_norm = (
+        _embedding_signature()
+    )
+    for provider, model, version, dimensions, normalized in rows:
+        if model and model != expected_model:
+            raise ValueError("Embedding model mismatch; use --rebuild to regenerate.")
+        if version and version != expected_version:
+            raise ValueError("Embedding version mismatch; use --rebuild to regenerate.")
+        if provider and provider != expected_provider:
+            raise ValueError("Embedding provider mismatch; use --rebuild to regenerate.")
+        if dimensions and dimensions != expected_dims:
+            raise ValueError("Embedding dimensions mismatch; use --rebuild to regenerate.")
+        if normalized is not None and normalized != expected_norm:
+            raise ValueError("Embedding normalization mismatch; use --rebuild to regenerate.")
+
+
 def build_embeddings_for_campaign(
     session,
     campaign_id: str,
     session_id: str | None = None,
     include_all_runs: bool = False,
     replace: bool = False,
+    rebuild: bool = False,
 ) -> EmbeddingStats:
     model = settings.embedding_model
     version = settings.embedding_version
     now = datetime.utcnow()
 
-    if replace:
-        delete_query = session.query(Embedding).filter(
-            Embedding.campaign_id == campaign_id,
-            Embedding.model == model,
-            Embedding.version == version,
-        )
+    if replace or rebuild:
+        delete_query = session.query(Embedding).filter(Embedding.campaign_id == campaign_id)
+        if not rebuild:
+            delete_query = delete_query.filter(
+                Embedding.model == model,
+                Embedding.version == version,
+            )
         if session_id:
             delete_query = delete_query.filter(
                 (Embedding.session_id == session_id) | (Embedding.session_id.is_(None))
@@ -224,26 +274,45 @@ def build_embeddings_for_campaign(
     else:
         deleted = 0
 
-    existing = {
-        (row.target_type, row.target_id)
-        for row in session.query(Embedding.target_type, Embedding.target_id)
+    _validate_embedding_compatibility(session, campaign_id, session_id, rebuild or replace)
+
+    existing_rows = (
+        session.query(Embedding.target_type, Embedding.target_id, Embedding.text_hash)
         .filter(
             Embedding.campaign_id == campaign_id,
             Embedding.model == model,
             Embedding.version == version,
         )
         .all()
-    }
+    )
+    existing = {(row[0], row[1]): row[2] for row in existing_rows}
 
     inputs = _collect_embedding_inputs(session, campaign_id, session_id, include_all_runs)
     pending: list[EmbeddingInput] = []
+    to_delete: list[tuple[str, str]] = []
     skipped = 0
     for entry in inputs:
         key = (entry.target_type, entry.target_id)
+        digest = text_hash(entry.content)
         if key in existing:
-            skipped += 1
-            continue
+            existing_hash = existing[key]
+            if existing_hash == digest:
+                skipped += 1
+                continue
+            to_delete.append(key)
         pending.append(entry)
+
+    if to_delete:
+        delete_filter = [
+            (Embedding.target_type == target_type) & (Embedding.target_id == target_id)
+            for target_type, target_id in to_delete
+        ]
+        session.query(Embedding).filter(
+            Embedding.campaign_id == campaign_id,
+            Embedding.model == model,
+            Embedding.version == version,
+            or_(*delete_filter),
+        ).delete(synchronize_session=False)
 
     created = 0
     batch_size = max(settings.embedding_batch_size, 1)
@@ -259,9 +328,13 @@ def build_embeddings_for_campaign(
                 target_type=item.target_type,
                 target_id=item.target_id,
                 content=item.content,
+                text_hash=text_hash(item.content),
                 embedding=vector,
                 model=model,
                 version=version,
+                provider=settings.embedding_provider,
+                dimensions=settings.embedding_dimensions,
+                normalized=settings.embedding_normalize,
                 created_at=now,
             )
             for item, vector in zip(batch, vectors)

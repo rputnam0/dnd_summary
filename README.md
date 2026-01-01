@@ -83,6 +83,19 @@ Use this to map speakers to participants and PCs to character names.
 If Docker/Temporal is not running, you can execute the pipeline in-process:
 - `uv run dnd-summary run-session-local avarias session_54`
 
+## Semantic recall (embeddings + Q&A)
+1) Apply migrations:
+   - `uv run alembic upgrade head`
+2) Build embeddings:
+   - `uv run dnd-summary build-embeddings <campaign_slug>`
+3) Verify retrieval:
+   - `GET /campaigns/<campaign>/semantic_retrieve?q=...`
+4) Ask the campaign:
+   - `POST /campaigns/<campaign>/ask` with `{"question": "..."}`
+
+Optional checks:
+- `uv run dnd-summary doctor --load-models` to validate pgvector + model loading.
+
 ## UI dashboard
 Run the API server and open the fantasy UI:
 - `uv run dnd-summary api`
