@@ -10,6 +10,8 @@ const state = {
   bundle: null,
   questThreads: [],
   campaignEntities: [],
+  transcriptLines: [],
+  utteranceTimecodes: {},
 };
 
 const elements = {
@@ -29,6 +31,7 @@ const elements = {
   sceneList: document.getElementById("sceneList"),
   eventList: document.getElementById("eventList"),
   quoteList: document.getElementById("quoteList"),
+  transcriptText: document.getElementById("transcriptText"),
   entityList: document.getElementById("entityList"),
   entityFilter: document.getElementById("entityFilter"),
   timelineList: document.getElementById("timelineList"),
@@ -68,6 +71,24 @@ function formatTime(ms) {
   const minutes = Math.floor(total / 60);
   const seconds = total % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function formatTimecode(ms) {
+  if (ms == null) return "";
+  const total = Math.floor(ms / 1000);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  return `${hours.toString().padStart(2, "0")}:${minutes
+    .toString()
+    .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function timecodeForUtterance(utteranceId, startMs) {
+  if (utteranceId && state.utteranceTimecodes[utteranceId]) {
+    return state.utteranceTimecodes[utteranceId];
+  }
+  return formatTimecode(startMs);
 }
 
 async function fetchJson(path) {
@@ -202,9 +223,10 @@ function renderDiagnostics(bundle) {
         acc.cached += entry.cached_content_token_count || 0;
         acc.candidates += entry.candidates_token_count || 0;
         acc.total += entry.total_token_count || 0;
+        acc.cost += entry.total_cost_usd || 0;
         return acc;
       },
-      { prompt: 0, cached: 0, candidates: 0, total: 0 }
+      { prompt: 0, cached: 0, candidates: 0, total: 0, cost: 0 }
     );
 
     const totalRow = document.createElement("div");
@@ -217,6 +239,18 @@ function renderDiagnostics(bundle) {
     totalRow.appendChild(totalValue);
     elements.runDiagnostics.appendChild(totalRow);
 
+    if (totals.cost > 0) {
+      const costRow = document.createElement("div");
+      costRow.className = "diagnostic-row";
+      const costLabel = document.createElement("span");
+      costLabel.textContent = "Estimated cost";
+      const costValue = document.createElement("strong");
+      costValue.textContent = `$${totals.cost.toFixed(4)}`;
+      costRow.appendChild(costLabel);
+      costRow.appendChild(costValue);
+      elements.runDiagnostics.appendChild(costRow);
+    }
+
     const usageList = document.createElement("div");
     usageList.className = "diagnostic-list";
     usage.forEach((entry) => {
@@ -227,9 +261,11 @@ function renderDiagnostics(bundle) {
       title.textContent = entry.call_kind || "llm_call";
       const meta = document.createElement("div");
       meta.className = "meta";
+      const cost =
+        entry.total_cost_usd != null ? ` • cost $${entry.total_cost_usd.toFixed(4)}` : "";
       meta.textContent = `prompt ${entry.prompt_token_count || 0} • cached ${
         entry.cached_content_token_count || 0
-      } • output ${entry.candidates_token_count || 0}`;
+      } • output ${entry.candidates_token_count || 0}${cost}`;
       item.appendChild(title);
       item.appendChild(meta);
       usageList.appendChild(item);
@@ -426,7 +462,11 @@ function renderQuotes(quotes) {
     block.textContent = `"${quote.display_text || quote.clean_text || ""}"`;
     card.appendChild(block);
     const footer = document.createElement("footer");
-    footer.textContent = `${quote.speaker || "Unknown"} ${quote.note ? "- " + quote.note : ""}`;
+    const timecode = timecodeForUtterance(quote.utterance_id);
+    const note = quote.note ? `- ${quote.note}` : "";
+    footer.textContent = [quote.speaker || "Unknown", note, timecode]
+      .filter(Boolean)
+      .join(" ");
     card.appendChild(footer);
     const evidence = [
       {
@@ -444,6 +484,15 @@ function renderQuotes(quotes) {
     card.appendChild(button);
     elements.quoteList.appendChild(card);
   });
+}
+
+function renderTranscript(lines) {
+  if (!elements.transcriptText) return;
+  if (!lines || lines.length === 0) {
+    elements.transcriptText.textContent = "Transcript not available.";
+    return;
+  }
+  elements.transcriptText.textContent = lines.join("\n");
 }
 
 function renderEntities(entities) {
@@ -685,6 +734,8 @@ function renderBundle(bundle) {
   if (!bundle) {
     return;
   }
+  state.transcriptLines = bundle.transcript?.lines || [];
+  state.utteranceTimecodes = bundle.transcript?.utterance_timecodes || {};
   renderMetrics(bundle);
   renderParagraphs(bundle.summary, bundle.run_status);
   renderQuality(bundle);
@@ -695,6 +746,7 @@ function renderBundle(bundle) {
   renderScenes(bundle.scenes || []);
   renderEvents(bundle.events || []);
   renderQuotes(bundle.quotes || []);
+  renderTranscript(state.transcriptLines);
   renderEntities(bundle.entities || []);
   renderTimeline(bundle.scenes || [], bundle.events || []);
 }
@@ -882,7 +934,9 @@ async function openEvidence(title, evidence) {
       const html = highlightSpan(utt.text, ev.char_start, ev.char_end);
       item.innerHTML = html;
       const meta = document.createElement("small");
-      meta.textContent = `${formatTime(utt.start_ms)} - ${formatTime(utt.end_ms)}`;
+      const timecode = timecodeForUtterance(utt.id, utt.start_ms);
+      const range = `${formatTimecode(utt.start_ms)} - ${formatTimecode(utt.end_ms)}`;
+      meta.textContent = [timecode, range].filter(Boolean).join(" • ");
       item.appendChild(meta);
       elements.evidenceDetails.appendChild(item);
     });

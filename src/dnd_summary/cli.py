@@ -223,19 +223,50 @@ def inspect_usage(campaign_slug: str, session_slug: str, run_id: str | None = No
             typer.echo("No usage records found for this run.")
             return
 
-        totals = {"prompt": 0, "cached": 0, "candidates": 0, "total": 0}
-        per_kind: dict[str, dict[str, int]] = {}
+        totals = {
+            "prompt": 0,
+            "cached": 0,
+            "candidates": 0,
+            "total": 0,
+            "non_cached": 0,
+            "input_cost": 0.0,
+            "cached_cost": 0.0,
+            "output_cost": 0.0,
+            "total_cost": 0.0,
+        }
+        per_kind: dict[str, dict[str, int | float]] = {}
         for record in records:
             payload = record.payload or {}
             kind = payload.get("call_kind", "unknown")
             bucket = per_kind.setdefault(
-                kind, {"prompt": 0, "cached": 0, "candidates": 0, "total": 0}
+                kind,
+                {
+                    "prompt": 0,
+                    "cached": 0,
+                    "candidates": 0,
+                    "total": 0,
+                    "non_cached": 0,
+                    "input_cost": 0.0,
+                    "cached_cost": 0.0,
+                    "output_cost": 0.0,
+                    "total_cost": 0.0,
+                },
             )
             for key, field in [
                 ("prompt", "prompt_token_count"),
                 ("cached", "cached_content_token_count"),
                 ("candidates", "candidates_token_count"),
                 ("total", "total_token_count"),
+                ("non_cached", "non_cached_prompt_token_count"),
+            ]:
+                value = payload.get(field) or 0
+                totals[key] += value
+                bucket[key] += value
+            for key, field in [
+                ("input_cost", "input_cost_usd"),
+                ("cached_cost", "cached_cost_usd"),
+                ("output_cost", "output_cost_usd"),
+                ("total_cost", "total_cost_usd"),
             ]:
                 value = payload.get(field) or 0
                 totals[key] += value
@@ -248,15 +279,27 @@ def inspect_usage(campaign_slug: str, session_slug: str, run_id: str | None = No
         typer.echo(f"run_id={run.id}")
         typer.echo(f"status={run.status}")
         typer.echo(
-            "totals prompt={prompt} cached={cached} output={candidates} total={total} cache_rate={rate:.2%}".format(
+            "totals prompt={prompt} cached={cached} non_cached={non_cached} output={candidates} total={total} cache_rate={rate:.2%}".format(
                 **totals, rate=cache_rate
             )
         )
+        if totals["total_cost"]:
+            typer.echo(
+                "totals_cost input=${input_cost:.4f} cached=${cached_cost:.4f} output=${output_cost:.4f} total=${total_cost:.4f}".format(
+                    **totals
+                )
+            )
         typer.echo("by_call_kind:")
         for kind, stats in per_kind.items():
-            typer.echo(
-                f"- {kind}: prompt={stats['prompt']} cached={stats['cached']} output={stats['candidates']} total={stats['total']}"
+            line = (
+                f"- {kind}: prompt={stats['prompt']} cached={stats['cached']} "
+                f"non_cached={stats['non_cached']} output={stats['candidates']} total={stats['total']}"
             )
+            if stats["total_cost"]:
+                line += (
+                    " cost=${total_cost:.4f} (input={input_cost:.4f} cached={cached_cost:.4f} output={output_cost:.4f})"
+                ).format(**stats)
+            typer.echo(line)
 
 
 @app.command()
@@ -396,13 +439,15 @@ def clear_caches(
             result = "dry-run"
             if client:
                 try:
-                    client.caches.delete(cache_name)
+                    client.caches.delete(name=cache_name)
                     result = "deleted"
                 except Exception as exc:
                     result = f"error={str(exc)[:120]}"
-            payload["invalidated"] = True
-            payload["invalidated_at"] = now
-            record.payload = payload
+            record.payload = {
+                **payload,
+                "invalidated": True,
+                "invalidated_at": now,
+            }
             typer.echo(
                 f"{campaign.slug}/{session_obj.slug}\t{record.run_id[:8]}\t{cache_name}\t{result}"
             )

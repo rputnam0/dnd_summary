@@ -637,6 +637,21 @@ button:hover {
   color: var(--ink-muted);
 }
 
+.transcript-text {
+  margin-top: 12px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  background: rgba(9, 11, 14, 0.75);
+  border: 1px solid rgba(207, 174, 88, 0.2);
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--ink-muted);
+  white-space: pre-wrap;
+  max-height: 520px;
+  overflow: auto;
+}
+
 .entity-card p {
   margin: 0;
   font-size: 0.85rem;

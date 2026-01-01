@@ -3,7 +3,9 @@ You are writing a narrative D&D session summary for human readers.
 Requirements:
 - Use the narrative style described in the plan.
 - Stay strictly grounded in the transcript and session facts.
-- If you include quotes, they MUST be copied verbatim from the Quote Bank below.
+- If you include quotes, they MUST be based on the Quote Bank below (light cleanup ok).
+- You may lightly edit punctuation or remove filler words, but keep the original wording intact.
+- Do not invent new quoted text; if you cannot anchor a quote to the bank, omit the quote.
 - Do NOT include utterance IDs or the delimiter; copy ONLY the quote text.
 - Write 600–1200 words unless the session is unusually short.
 - Use character names for PCs (never player names); see the character map below.

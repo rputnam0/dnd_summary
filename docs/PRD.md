@@ -326,17 +326,40 @@ Corrections are persisted as overrides and must influence subsequent runs (const
 - **Multi-tenancy (future)**: campaign boundaries enforced in schema; future auth should map users→campaign permissions.
 
 ## 15) Roadmap
-### v0 (first useful system)
+### v0 (done): pipeline + read-only dashboard
 - Temporal + Postgres local dev (Docker Compose).
 - Transcript ingestion → utterances in DB.
 - Full-transcript structured extraction → DB (entities/scenes/events/quotes/threads).
 - Summary generation (plan → write) and DOCX export.
+- Read API + UI dashboard for browsing/search and run diagnostics.
 
-### v1 (UI-ready + corrections + external context)
-- Entity resolution improvements + alias merge tools.
-- Human correction loop in UI/API.
-- Optional character sheet ingestion (D&D Beyond exports) and timestamped dice roll logs.
+### v0.5 (local dashboard MVP: run from the UI)
+- Migrations + indexes (Alembic) so schema changes are safe and repeatable.
+- Start runs from the UI (Temporal-backed) and show progress (polling or SSE).
+- Explicit “current run” per session (persisted selection; not just latest completed).
+- Data lifecycle controls: export + deletion (privacy and portability).
+- Evidence-first navigation: jump from scenes/events/quotes to transcript spans.
+
+### v1 (curation + roles: DM + players safely share the same campaign)
+- Human correction loop in UI/API:
+  - Rename/merge/hide entities; add/remove aliases; mark false positives.
+  - Edit thread status/title/summary; merge threads; manage quest history.
+  - Redactions and spoiler controls; optional “DM as NPC” attribution for quotes.
+- Canonical campaign state derived from extracted runs + corrections (auditable overrides).
+- Auth + campaign membership roles (`dm|player`) with role-gated UI panels and endpoints.
+- Data model upgrades for interactivity (reduce name-string heuristics):
+  - Relational links for entity↔event/scene/thread
+  - Canonical thread IDs across sessions (stable quest journal)
+
+### v1.5 (semantic recall, grounded)
+- Embeddings store + vector index (e.g., pgvector) with versioning.
+- Semantic search across utterances/events/scenes/entities that always returns evidence.
+- “Ask the campaign” Q&A with spoiler-aware retrieval and evidence-first answers.
 
 ### v2 (optimization + images)
-- DSPy pipeline + eval dashboards + prompt version promotion.
-- Scene prompt generation and optional image rendering (Gemini Nano Banana Pro).
+- DSPy optimization loop + eval dashboards + prompt version promotion process.
+- Scene prompt generation and optional image rendering (pluggable providers).
+
+### vNext (external sources)
+- Character sheet snapshots and dice/roll logs (timestamped) ingested as optional session inputs.
+- When roll logs include timestamps, align roll events to transcript time and reference as evidence.

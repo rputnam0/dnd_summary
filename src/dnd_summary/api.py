@@ -9,10 +9,12 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_
+from sqlalchemy.orm import joinedload
 
 from dnd_summary.config import settings
 from dnd_summary.db import get_session
 from dnd_summary.llm import LLMClient
+from dnd_summary.mappings import load_character_map
 from dnd_summary.models import (
     Artifact,
     Campaign,
@@ -32,6 +34,7 @@ from dnd_summary.models import (
     Utterance,
 )
 from dnd_summary.schema_genai import semantic_search_schema
+from dnd_summary.transcript_format import format_transcript
 
 
 app = FastAPI(title="DND Summary API", version="0.0.0")
@@ -1367,6 +1370,30 @@ def get_session_bundle(
             .order_by(SessionExtraction.created_at.desc())
             .first()
         )
+        persist_metrics = (
+            session.query(SessionExtraction)
+            .filter_by(session_id=session_id, run_id=resolved_run_id, kind="persist_metrics")
+            .order_by(SessionExtraction.created_at.desc())
+            .first()
+        )
+        quality_report = (
+            session.query(SessionExtraction)
+            .filter_by(session_id=session_id, run_id=resolved_run_id, kind="quality_report")
+            .order_by(SessionExtraction.created_at.desc())
+            .first()
+        )
+        llm_calls = (
+            session.query(LLMCall)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
+            .order_by(LLMCall.created_at.asc(), LLMCall.id.asc())
+            .all()
+        )
+        llm_usage = (
+            session.query(SessionExtraction)
+            .filter_by(session_id=session_id, run_id=resolved_run_id, kind="llm_usage")
+            .order_by(SessionExtraction.created_at.asc(), SessionExtraction.id.asc())
+            .all()
+        )
         artifacts = (
             session.query(Artifact)
             .filter_by(session_id=session_id, run_id=resolved_run_id)
@@ -1378,6 +1405,20 @@ def get_session_bundle(
             .all()
         )
         utterance_lookup = _utterance_lookup(session, {session_id})
+        utterances = (
+            session.query(Utterance)
+            .options(joinedload(Utterance.participant))
+            .filter_by(session_id=session_id)
+            .order_by(Utterance.start_ms.asc(), Utterance.id.asc())
+            .all()
+        )
+        transcript_lines: list[str] = []
+        utterance_timecodes: dict[str, str] = {}
+        if utterances and run:
+            character_map = load_character_map(session, run.campaign_id)
+            transcript_text, key_to_id = format_transcript(utterances, character_map)
+            transcript_lines = transcript_text.splitlines()
+            utterance_timecodes = {utt_id: key for key, utt_id in key_to_id.items()}
 
         scenes = (
             session.query(Scene)
@@ -1451,6 +1492,11 @@ def get_session_bundle(
                 for call in llm_calls
             ],
             "llm_usage": [record.payload for record in llm_usage],
+            "transcript": {
+                "format": settings.transcript_format_version,
+                "lines": transcript_lines,
+                "utterance_timecodes": utterance_timecodes,
+            },
             "artifacts": [
                 {
                     "id": a.id,

@@ -18,7 +18,7 @@ Rules:
 - Use character names (in-world), not player names, when referring to PCs.
 - Prefer the character map below when naming PCs or speakers.
 - Use ONLY utterance_id values that appear in the transcript below.
-- utterance_id must be the bracketed ID, not the timestamp range.
+- utterance_id must be the bracketed timecode key (e.g., 00:07:56 or 00:07:56#2).
 - char_start/char_end must be offsets into the referenced utterance text (0-based, within the utterance text only).
 - char_end must be > char_start and within the utterance text length (never 0,0).
 - Quotes must isolate the in-character line only (exclude narration like "she goes", "he says", "they say").
