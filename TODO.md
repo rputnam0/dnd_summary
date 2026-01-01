@@ -139,7 +139,7 @@ the repo in a working state.
    - Minimal local auth: passwordless invite links or simple JWT with per-campaign membership.
    - Acceptance: DM-only routes are protected; players can read allowed views.
 
-23) Commit: Role-gate sensitive endpoints and UI panels
+23) Commit: Role-gate sensitive endpoints and UI panels (done)
    - DM: edits, raw transcripts, redaction tools, “all runs” diagnostics.
    - Player: curated summary, quest journal (non-spoiler), codex (non-hidden).
    - Acceptance: same campaign can be safely shared.

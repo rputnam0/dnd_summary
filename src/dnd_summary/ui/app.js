@@ -7,6 +7,9 @@ const state = {
   selectedCampaign: null,
   selectedSession: null,
   selectedRun: null,
+  currentUserId: null,
+  userRole: "dm",
+  authEnabled: false,
   bundle: null,
   questThreads: [],
   campaignEntities: [],
@@ -16,6 +19,9 @@ const state = {
 
 const elements = {
   campaignSelect: document.getElementById("campaignSelect"),
+  userIdInput: document.getElementById("userIdInput"),
+  userSetButton: document.getElementById("userSetButton"),
+  userRole: document.getElementById("userRole"),
   sessionList: document.getElementById("sessionList"),
   sessionCount: document.getElementById("sessionCount"),
   statusLine: document.getElementById("statusLine"),
@@ -97,7 +103,11 @@ function timecodeForUtterance(utteranceId, startMs) {
 }
 
 async function fetchJson(path) {
-  const response = await fetch(`${API_BASE}${path}`);
+  const headers = {};
+  if (state.currentUserId) {
+    headers["X-User-Id"] = state.currentUserId;
+  }
+  const response = await fetch(`${API_BASE}${path}`, { headers });
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Request failed: ${response.status}`);
@@ -106,11 +116,15 @@ async function fetchJson(path) {
 }
 
 async function postJson(path, payload) {
+  const headers = {
+    "Content-Type": "application/json",
+  };
+  if (state.currentUserId) {
+    headers["X-User-Id"] = state.currentUserId;
+  }
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
@@ -475,6 +489,7 @@ function renderQuotes(quotes) {
     elements.quoteList.textContent = "No notable quotes captured.";
     return;
   }
+  const canEdit = !state.authEnabled || state.userRole === "dm";
   quotes.forEach((quote) => {
     const card = document.createElement("div");
     card.className = "quote-card";
@@ -502,14 +517,16 @@ function renderQuotes(quotes) {
       openEvidence(`Quote: ${quote.speaker || "Unknown"}`, evidence)
     );
     card.appendChild(button);
-    const redactButton = document.createElement("button");
-    redactButton.type = "button";
-    redactButton.className = "danger";
-    redactButton.textContent = "Redact quote";
-    redactButton.addEventListener("click", () =>
-      applyRedaction("quote", quote.id, "this quote")
-    );
-    card.appendChild(redactButton);
+    if (canEdit) {
+      const redactButton = document.createElement("button");
+      redactButton.type = "button";
+      redactButton.className = "danger";
+      redactButton.textContent = "Redact quote";
+      redactButton.addEventListener("click", () =>
+        applyRedaction("quote", quote.id, "this quote")
+      );
+      card.appendChild(redactButton);
+    }
     elements.quoteList.appendChild(card);
   });
 }
@@ -567,6 +584,7 @@ function renderQuestJournal(threads) {
     elements.questList.textContent = "No quests found for this campaign.";
     return;
   }
+  const canEdit = !state.authEnabled || state.userRole === "dm";
   threads.forEach((thread) => {
     const card = document.createElement("div");
     card.className = "thread-card";
@@ -593,11 +611,13 @@ function renderQuestJournal(threads) {
       });
       card.appendChild(updates);
     }
-    const editButton = document.createElement("button");
-    editButton.type = "button";
-    editButton.textContent = "Edit quest";
-    editButton.addEventListener("click", () => openThread(thread));
-    card.appendChild(editButton);
+    if (canEdit) {
+      const editButton = document.createElement("button");
+      editButton.type = "button";
+      editButton.textContent = "Edit quest";
+      editButton.addEventListener("click", () => openThread(thread));
+      card.appendChild(editButton);
+    }
     if (thread.session_id) {
       const button = document.createElement("button");
       button.type = "button";
@@ -830,21 +850,26 @@ function updateDownload(bundle) {
 
 async function loadCampaigns() {
   setStatus("Loading campaigns...");
-  const data = await fetchJson("/campaigns");
-  state.campaigns = data;
-  clearNode(elements.campaignSelect);
-  data.forEach((campaign) => {
-    const option = document.createElement("option");
-    option.value = campaign.slug;
-    option.textContent = campaign.name || campaign.slug;
-    elements.campaignSelect.appendChild(option);
-  });
-  if (data.length > 0) {
-    state.selectedCampaign = data[0].slug;
-    elements.campaignSelect.value = state.selectedCampaign;
-    await loadSessions();
-  } else {
-    setStatus("No campaigns found.");
+  try {
+    const data = await fetchJson("/campaigns");
+    state.campaigns = data;
+    clearNode(elements.campaignSelect);
+    data.forEach((campaign) => {
+      const option = document.createElement("option");
+      option.value = campaign.slug;
+      option.textContent = campaign.name || campaign.slug;
+      elements.campaignSelect.appendChild(option);
+    });
+    if (data.length > 0) {
+      state.selectedCampaign = data[0].slug;
+      elements.campaignSelect.value = state.selectedCampaign;
+      await loadSessions();
+    } else {
+      setStatus("No campaigns found.");
+    }
+  } catch (err) {
+    setStatus("Unable to load campaigns. Set a user id if auth is enabled.");
+    console.error(err);
   }
 }
 
@@ -859,6 +884,7 @@ async function loadSessions() {
   renderSessions();
   clearNode(elements.runSelect);
   elements.sessionOnlyToggle.disabled = true;
+  await loadUserRole();
   await loadQuestJournal();
   await loadCodex();
   setStatus("Select a session to begin.");
@@ -947,6 +973,7 @@ async function openEvidence(title, evidence) {
   elements.evidenceMeta.textContent = `${evidence.length} evidence spans`;
   clearNode(elements.evidenceDetails);
   elements.evidencePanel.classList.remove("hidden");
+  const canEdit = !state.authEnabled || state.userRole === "dm";
   const ids = [...new Set(evidence.map((ev) => ev.utterance_id).filter(Boolean))];
   if (ids.length === 0) {
     elements.evidenceDetails.appendChild(
@@ -971,14 +998,16 @@ async function openEvidence(title, evidence) {
       const range = `${formatTimecode(utt.start_ms)} - ${formatTimecode(utt.end_ms)}`;
       meta.textContent = [timecode, range].filter(Boolean).join(" • ");
       item.appendChild(meta);
-      const redact = document.createElement("button");
-      redact.type = "button";
-      redact.className = "danger";
-      redact.textContent = "Redact utterance";
-      redact.addEventListener("click", () =>
-        applyRedaction("utterance", utt.id, "this utterance")
-      );
-      item.appendChild(redact);
+      if (canEdit) {
+        const redact = document.createElement("button");
+        redact.type = "button";
+        redact.className = "danger";
+        redact.textContent = "Redact utterance";
+        redact.addEventListener("click", () =>
+          applyRedaction("utterance", utt.id, "this utterance")
+        );
+        item.appendChild(redact);
+      }
       elements.evidenceDetails.appendChild(item);
     });
   } catch (err) {
@@ -1025,6 +1054,44 @@ async function loadBundle(sessionId, runId) {
   renderBundle(bundle);
   const runShort = bundle.run_id ? bundle.run_id.slice(0, 8) : "unknown";
   setStatus(`Session loaded. Run ${runShort}.`);
+}
+
+function setUserId(value) {
+  const nextValue = value.trim();
+  state.currentUserId = nextValue || null;
+  if (state.currentUserId) {
+    localStorage.setItem("dndUserId", state.currentUserId);
+  } else {
+    localStorage.removeItem("dndUserId");
+  }
+}
+
+function renderUserRole() {
+  if (!elements.userRole) return;
+  if (!state.authEnabled) {
+    elements.userRole.textContent = "Auth disabled";
+    return;
+  }
+  if (!state.currentUserId) {
+    elements.userRole.textContent = "Set a user id";
+    return;
+  }
+  elements.userRole.textContent = `Role: ${state.userRole || "player"}`;
+}
+
+async function loadUserRole() {
+  if (!state.selectedCampaign) return;
+  try {
+    const data = await fetchJson(`/campaigns/${state.selectedCampaign}/me`);
+    state.authEnabled = Boolean(data.auth_enabled);
+    state.userRole = data.role || "player";
+    renderUserRole();
+  } catch (err) {
+    state.authEnabled = true;
+    state.userRole = "player";
+    renderUserRole();
+    setStatus("Set a user id to continue.");
+  }
 }
 
 async function refreshAfterCorrection(entityId) {
@@ -1340,7 +1407,14 @@ async function openEntity(entity) {
       fetchJson(`/entities/${entity.id}/events${suffix}`),
       fetchJson(`/entities/${entity.id}/quotes${suffix}`),
     ]);
-    elements.entityDetails.appendChild(buildEntityEditor(detail));
+    const canEdit = !state.authEnabled || state.userRole === "dm";
+    if (canEdit) {
+      elements.entityDetails.appendChild(buildEntityEditor(detail));
+    } else {
+      elements.entityDetails.appendChild(
+        renderSearchItem("Read-only view. DM access required for edits.", null)
+      );
+    }
 
     const blocks = [];
     if (mentions.length > 0) {
@@ -1559,10 +1633,32 @@ function closeSearch() {
 }
 
 async function init() {
+  const storedUserId = localStorage.getItem("dndUserId") || "";
+  if (storedUserId) {
+    state.currentUserId = storedUserId;
+    if (elements.userIdInput) {
+      elements.userIdInput.value = storedUserId;
+    }
+  }
+  renderUserRole();
   elements.campaignSelect.addEventListener("change", async (event) => {
     state.selectedCampaign = event.target.value;
     await loadSessions();
   });
+  if (elements.userSetButton && elements.userIdInput) {
+    elements.userSetButton.addEventListener("click", async () => {
+      setUserId(elements.userIdInput.value || "");
+      renderUserRole();
+      await loadCampaigns();
+    });
+    elements.userIdInput.addEventListener("keydown", async (event) => {
+      if (event.key === "Enter") {
+        setUserId(elements.userIdInput.value || "");
+        renderUserRole();
+        await loadCampaigns();
+      }
+    });
+  }
   elements.searchButton.addEventListener("click", runSearch);
   elements.searchInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {

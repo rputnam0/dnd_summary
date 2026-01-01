@@ -142,6 +142,21 @@ input[type="search"] {
   gap: 8px;
 }
 
+.user-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.user-row input {
+  min-width: 180px;
+}
+
+.user-group .meta {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+}
+
 button {
   border: none;
   border-radius: 12px;

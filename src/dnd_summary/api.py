@@ -332,6 +332,30 @@ def create_membership(campaign_slug: str, payload: dict, request: Request) -> di
         }
 
 
+@app.get("/campaigns/{campaign_slug}/me")
+def get_campaign_membership(campaign_slug: str, request: Request) -> dict:
+    _validate_slug(campaign_slug, "campaign")
+    with get_session() as session:
+        campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        if not settings.auth_enabled:
+            return {"auth_enabled": False, "role": "dm", "user_id": None}
+        user_id = _auth_user_id(request)
+        membership = (
+            session.query(CampaignMembership)
+            .filter_by(campaign_id=campaign.id, user_id=user_id)
+            .first()
+        )
+        if not membership:
+            raise HTTPException(status_code=403, detail="Missing campaign access")
+        return {
+            "auth_enabled": True,
+            "user_id": membership.user_id,
+            "role": membership.role,
+        }
+
+
 @app.get("/campaigns/{campaign_slug}/sessions")
 def list_sessions(campaign_slug: str, request: Request) -> list[dict]:
     _validate_slug(campaign_slug, "campaign")
