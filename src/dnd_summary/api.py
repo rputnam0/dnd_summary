@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_
@@ -43,6 +43,11 @@ app = FastAPI(title="DND Summary API", version="0.0.0")
 UI_ROOT = Path(__file__).resolve().parent / "ui"
 if UI_ROOT.exists():
     app.mount("/ui", StaticFiles(directory=UI_ROOT, html=True), name="ui")
+
+
+def _validate_slug(value: str, label: str) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", value):
+        raise HTTPException(status_code=400, detail=f"Invalid {label} slug")
 
 
 @app.get("/", include_in_schema=False)
@@ -84,6 +89,7 @@ def list_campaigns() -> list[dict]:
 
 @app.get("/campaigns/{campaign_slug}/sessions")
 def list_sessions(campaign_slug: str) -> list[dict]:
+    _validate_slug(campaign_slug, "campaign")
     with get_session() as session:
         campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
         if not campaign:
@@ -121,6 +127,7 @@ def list_sessions(campaign_slug: str) -> list[dict]:
 
 @app.get("/campaigns/{campaign_slug}/entities")
 def list_entities(campaign_slug: str) -> list[dict]:
+    _validate_slug(campaign_slug, "campaign")
     with get_session() as session:
         campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
         if not campaign:
@@ -140,6 +147,35 @@ def list_entities(campaign_slug: str) -> list[dict]:
             }
             for e in entities
         ]
+
+
+@app.post("/campaigns/{campaign_slug}/sessions/{session_slug}/transcript")
+async def upload_transcript(
+    campaign_slug: str,
+    session_slug: str,
+    file: UploadFile = File(...),
+) -> dict:
+    _validate_slug(campaign_slug, "campaign")
+    _validate_slug(session_slug, "session")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in {".jsonl", ".txt", ".srt"}:
+        raise HTTPException(status_code=400, detail="Unsupported transcript format")
+    dest_dir = (
+        Path(settings.transcripts_root)
+        / "campaigns"
+        / campaign_slug
+        / "sessions"
+        / session_slug
+    )
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / f"transcript{suffix}"
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty transcript")
+    dest_path.write_bytes(content)
+    return {"path": str(dest_path), "bytes": len(content)}
 
 
 @app.get("/entities/{entity_id}")

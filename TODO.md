@@ -63,24 +63,24 @@ the repo in a working state.
    - Acceptance: a new clone can run `uv venv && uv pip install -e ".[dev]"` and `dnd-summary api`.
 
 ### Phase 1: Backend foundations (migrations, indexes, canonical “current run”)
-5) Commit: Add Alembic and a baseline migration for the existing schema
+5) Commit: Add Alembic and a baseline migration for the existing schema (done)
    - Stop relying on runtime `metadata.create_all()` as the primary schema mechanism.
    - Acceptance: `alembic upgrade head` creates all tables on an empty DB.
 
-6) Commit: Add Postgres indexes for UI + search hot paths
+6) Commit: Add Postgres indexes for UI + search hot paths (done)
    - Add GIN/TSVECTOR indexes for search and indexes for `(campaign_id, session_id, run_id)` joins.
    - Acceptance: search endpoints return identical results; query plans use indexes on Postgres.
 
-7) Commit: Add `sessions.current_run_id` (explicit “current view”)
+7) Commit: Add `sessions.current_run_id` (explicit “current view”) (done)
    - Migration + API behavior: default to `current_run_id` if set, else latest completed.
    - Acceptance: selecting a run becomes persistent across reloads and across UI clients.
 
-8) Commit: Add run-level step tracking for progress
+8) Commit: Add run-level step tracking for progress (done)
    - Minimal model: `run_steps` (step name, status, started_at, finished_at, error).
    - Acceptance: UI can show live-ish progress without reading Temporal internals.
 
 ### Phase 2: API enables a real dashboard workflow (not just “read what exists”)
-9) Commit: Add API endpoint to upload/attach a transcript to a session
+9) Commit: Add API endpoint to upload/attach a transcript to a session (done)
    - Support `transcript.jsonl|txt|srt` upload into canonical `transcripts/**` layout.
    - Acceptance: UI can create/update a session’s transcript without manual filesystem work.
 
