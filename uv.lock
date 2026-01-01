@@ -412,6 +412,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "alembic" },
     { name = "black" },
     { name = "flake8" },
     { name = "pytest" },
@@ -422,6 +423,7 @@ eval = [
 
 [package.metadata]
 requires-dist = [
+    { name = "alembic", marker = "extra == 'dev'", specifier = ">=1.13" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=24.3" },
     { name = "dspy-ai", marker = "extra == 'eval'", specifier = ">=2.4.0" },
     { name = "fastapi", specifier = ">=0.110" },

@@ -29,6 +29,37 @@ Use `uv` with `pyproject.toml` (no `requirements.txt`).
 - Run tests:
   - `uv run pytest`
 
+## Database migrations (Alembic)
+
+Migrations are authoritative; runtime schema creation is disabled.
+
+### Fresh DB setup
+- `export DND_DATABASE_URL="postgresql+psycopg://dnd:dnd@localhost:5432/dnd_summary"`
+- `uv run alembic upgrade head`
+
+### Stamping an existing DB created via create_all
+1) Identify the baseline revision id in `alembic/versions/0001_initial_schema.py`
+   - `revision = "0001_initial_schema"`
+2) Back up the existing DB (required):
+   - `docker compose exec -T app-postgres pg_dump -U dnd -d dnd_summary -Fc > backup_before_alembic_stamp.dump`
+   - Optional sanity check: `pg_restore --list backup_before_alembic_stamp.dump | head`
+3) Create a scratch DB and run the baseline migration:
+   - `docker compose exec -T app-postgres createdb -U dnd dnd_scratch_schemacheck`
+   - `export DND_DATABASE_URL="postgresql+psycopg://dnd:dnd@localhost:5432/dnd_scratch_schemacheck"`
+   - `uv run alembic upgrade head`
+4) Dump schema-only from both DBs and diff them:
+   - `docker compose exec -T app-postgres pg_dump -U dnd -d dnd_scratch_schemacheck --schema-only --no-owner --no-privileges > /tmp/schema_from_alembic.sql`
+   - `docker compose exec -T app-postgres pg_dump -U dnd -d dnd_summary --schema-only --no-owner --no-privileges > /tmp/schema_existing.sql`
+   - `diff -u /tmp/schema_from_alembic.sql /tmp/schema_existing.sql | less`
+   - Acceptable diffs: `alembic_version`, `\\restrict/\\unrestrict` tokens, ownership/comments/order.
+5) If differences are only trivial (ordering/ownership/comments), stamp the existing DB:
+   - `uv run alembic stamp 0001_initial_schema`
+6) Verify tracking:
+   - `uv run alembic current`
+   - `uv run alembic history --verbose | head -n 50`
+7) Drop scratch DB if not needed:
+   - `docker compose exec -T app-postgres dropdb -U dnd dnd_scratch_schemacheck`
+
 ## LLM configuration
 
 Set your Gemini API key in the environment before running extraction:

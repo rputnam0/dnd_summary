@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 import re
+from difflib import SequenceMatcher
 from datetime import datetime
 from pathlib import Path
 from hashlib import sha256
@@ -10,29 +11,26 @@ from hashlib import sha256
 from temporalio import activity
 
 from dnd_summary.config import settings
-from dnd_summary.db import ENGINE, get_session
+from dnd_summary.db import get_session
 from dnd_summary.llm import LLMClient
-from dnd_summary.llm_cache import ensure_transcript_cache, record_llm_usage
+from dnd_summary.llm_cache import (
+    CacheRequiredError,
+    build_text_metrics,
+    cache_hit_from_usage,
+    ensure_transcript_cache,
+    record_llm_usage,
+)
 from dnd_summary.mappings import load_character_map
-from dnd_summary.models import Artifact, Base, LLMCall, Quote, Run, SessionExtraction, Utterance
+from dnd_summary.models import Artifact, LLMCall, Quote, Run, SessionExtraction, Utterance
 from dnd_summary.render import render_summary_docx
 from dnd_summary.schema_genai import summary_plan_schema
 from dnd_summary.schemas import SessionFacts, SummaryPlan
+from dnd_summary.transcript_format import format_transcript
 
 
 def _load_prompt(prompt_name: str) -> str:
     prompt_path = Path(settings.prompts_root) / prompt_name
     return prompt_path.read_text(encoding="utf-8")
-
-
-def _format_transcript(utterances: list[Utterance], character_map: dict[str, str]) -> str:
-    lines = []
-    for utt in utterances:
-        speaker = character_map.get(utt.participant.display_name, utt.participant.display_name)
-        lines.append(
-            f"[{utt.id}] {speaker} {utt.start_ms}-{utt.end_ms} {utt.text}"
-        )
-    return "\n".join(lines)
 
 
 def _quote_text(utterance: str, quote: Quote) -> str:
@@ -101,6 +99,29 @@ def _build_quote_lookup(
     return quote_lookup
 
 
+def _normalize_quote(text: str) -> str:
+    cleaned = re.sub(r"[^\w\s]", " ", text.lower())
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _quote_allowed(quote: str, allowed: list[str]) -> bool:
+    cleaned = _normalize_quote(quote)
+    if not cleaned:
+        return True
+    if cleaned in allowed:
+        return True
+    tokens = cleaned.split()
+    if len(tokens) >= 3:
+        for candidate in allowed:
+            if cleaned in candidate or candidate in cleaned:
+                return True
+    if len(tokens) >= 4:
+        for candidate in allowed:
+            if SequenceMatcher(None, cleaned, candidate).ratio() >= 0.85:
+                return True
+    return False
+
+
 def _validate_summary_quotes(summary_text: str, quote_texts: list[str]) -> None:
     if "[" in summary_text and "]" in summary_text:
         raise ValueError("Summary appears to contain utterance IDs.")
@@ -112,22 +133,31 @@ def _validate_summary_quotes(summary_text: str, quote_texts: list[str]) -> None:
     if not quoted:
         return
 
-    def _clean(text: str) -> str:
-        return re.sub(r"[*_`]+", "", text).strip()
-
-    allowed = {_clean(q) for q in quote_texts}
+    allowed_set = {_normalize_quote(q) for q in quote_texts if q}
+    allowed_list = [q for q in allowed_set if q]
     missing = []
     for q in quoted:
-        cleaned = _clean(q)
-        if cleaned not in allowed:
-            missing.append(cleaned)
+        if not _quote_allowed(q, allowed_list):
+            missing.append(q)
     if missing:
         raise ValueError("Summary contains quotes not in quote bank.")
 
 
+def _strip_unapproved_quotes(summary_text: str, quote_texts: list[str]) -> str:
+    allowed_set = {_normalize_quote(q) for q in quote_texts if q}
+    allowed_list = [q for q in allowed_set if q]
+
+    def _replace(match: re.Match[str]) -> str:
+        quote = match.group(1)
+        if _quote_allowed(quote, allowed_list):
+            return match.group(0)
+        return quote
+
+    return re.sub(r'"([^"]+)"', _replace, summary_text)
+
+
 @activity.defn
 async def plan_summary_activity(payload: dict) -> dict:
-    Base.metadata.create_all(bind=ENGINE)
     run_id = payload["run_id"]
     session_id = payload["session_id"]
 
@@ -156,17 +186,38 @@ async def plan_summary_activity(payload: dict) -> dict:
         )
 
         character_map = load_character_map(session, run.campaign_id)
-        transcript_text = _format_transcript(utterances, character_map)
-        cache_name, transcript_block = ensure_transcript_cache(
-            session, run, transcript_text
-        )
+        transcript_text, _ = format_transcript(utterances, character_map)
+        transcript_stats = build_text_metrics("transcript", transcript_text)
+        base_usage = {
+            "utterance_count": len(utterances),
+            "character_count": len(character_map),
+            "quote_count": len(quotes),
+        }
+        try:
+            cache_name, transcript_block = ensure_transcript_cache(
+                session, run, transcript_text
+            )
+        except CacheRequiredError:
+            session.commit()
+            raise
         quote_bank = _quote_bank(utterances, quotes)
+        quote_bank_stats = build_text_metrics("quote_bank", quote_bank)
+        facts_json = json.dumps(facts.model_dump(mode="json"))
+        facts_stats = build_text_metrics("session_facts", facts_json)
         prompt = _load_prompt("summary_plan_v1.txt").format(
-            session_facts=json.dumps(facts.model_dump(mode="json")),
+            session_facts=facts_json,
             quote_bank=quote_bank or "[none]",
             character_map=json.dumps(character_map, sort_keys=True),
             transcript_block=transcript_block,
         )
+        prompt_stats = build_text_metrics("prompt", prompt)
+        usage_meta = {
+            **transcript_stats,
+            **quote_bank_stats,
+            **facts_stats,
+            **prompt_stats,
+            **base_usage,
+        }
 
         client = LLMClient()
         start = time.monotonic()
@@ -178,6 +229,36 @@ async def plan_summary_activity(payload: dict) -> dict:
                 return_usage=True,
             )
             latency_ms = int((time.monotonic() - start) * 1000)
+            cache_hit = cache_hit_from_usage(usage, cache_name)
+            if settings.require_transcript_cache and not cache_hit:
+                session.add(
+                    LLMCall(
+                        run_id=run.id,
+                        session_id=session_id,
+                        kind="summary_plan",
+                        model=settings.gemini_model,
+                        prompt_id="summary_plan_v1",
+                        prompt_version="3",
+                        input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
+                        output_hash=sha256(b"").hexdigest(),
+                        latency_ms=latency_ms,
+                        status="error",
+                        error="Transcript cache miss for summary_plan.",
+                        created_at=datetime.utcnow(),
+                    )
+                )
+                record_llm_usage(
+                    session,
+                    run_id=run.id,
+                    session_id=session_id,
+                    prompt_id="summary_plan_v1",
+                    prompt_version="3",
+                    call_kind="summary_plan",
+                    usage=usage,
+                    cache_name=cache_name,
+                    metadata=usage_meta,
+                )
+                raise CacheRequiredError("Transcript cache miss for summary_plan.")
             session.add(
                 LLMCall(
                     run_id=run.id,
@@ -202,7 +283,11 @@ async def plan_summary_activity(payload: dict) -> dict:
                 call_kind="summary_plan",
                 usage=usage,
                 cache_name=cache_name,
+                metadata=usage_meta,
             )
+        except CacheRequiredError:
+            session.commit()
+            raise
         except Exception as exc:
             latency_ms = int((time.monotonic() - start) * 1000)
             session.add(
@@ -247,7 +332,6 @@ async def plan_summary_activity(payload: dict) -> dict:
 
 @activity.defn
 async def write_summary_activity(payload: dict) -> dict:
-    Base.metadata.create_all(bind=ENGINE)
     run_id = payload["run_id"]
     session_id = payload["session_id"]
 
@@ -283,10 +367,20 @@ async def write_summary_activity(payload: dict) -> dict:
             .all()
         )
         character_map = load_character_map(session, run.campaign_id)
-        transcript_text = _format_transcript(utterances, character_map)
-        cache_name, transcript_block = ensure_transcript_cache(
-            session, run, transcript_text
-        )
+        transcript_text, _ = format_transcript(utterances, character_map)
+        transcript_stats = build_text_metrics("transcript", transcript_text)
+        base_usage = {
+            "utterance_count": len(utterances),
+            "character_count": len(character_map),
+            "quote_count": len(quotes),
+        }
+        try:
+            cache_name, transcript_block = ensure_transcript_cache(
+                session, run, transcript_text
+            )
+        except CacheRequiredError:
+            session.commit()
+            raise
 
         quote_ids: list[str] = []
         for beat in plan.beats:
@@ -295,14 +389,29 @@ async def write_summary_activity(payload: dict) -> dict:
                     quote_ids.append(qid)
         quote_bank = _quote_bank(utterances, quotes, quote_ids)
         quote_lookup = _build_quote_lookup(utterances, quotes, quote_ids)
+        quote_bank_stats = build_text_metrics("quote_bank", quote_bank)
+        facts_json = json.dumps(facts.model_dump(mode="json"))
+        plan_json = json.dumps(plan.model_dump(mode="json"))
+        facts_stats = build_text_metrics("session_facts", facts_json)
+        plan_stats = build_text_metrics("summary_plan", plan_json)
+        base_usage["quote_ids_count"] = len(quote_ids)
 
         prompt = _load_prompt("write_summary_v1.txt").format(
-            summary_plan=json.dumps(plan.model_dump(mode="json")),
-            session_facts=json.dumps(facts.model_dump(mode="json")),
+            summary_plan=plan_json,
+            session_facts=facts_json,
             quote_bank=quote_bank or "[none]",
             character_map=json.dumps(character_map, sort_keys=True),
             transcript_block=transcript_block,
         )
+        prompt_stats = build_text_metrics("prompt", prompt)
+        usage_meta = {
+            **transcript_stats,
+            **quote_bank_stats,
+            **facts_stats,
+            **plan_stats,
+            **prompt_stats,
+            **base_usage,
+        }
 
         client = LLMClient()
         start = time.monotonic()
@@ -313,6 +422,36 @@ async def write_summary_activity(payload: dict) -> dict:
                 return_usage=True,
             )
             latency_ms = int((time.monotonic() - start) * 1000)
+            cache_hit = cache_hit_from_usage(usage, cache_name)
+            if settings.require_transcript_cache and not cache_hit:
+                session.add(
+                    LLMCall(
+                        run_id=run.id,
+                        session_id=session_id,
+                        kind="summary_text",
+                        model=settings.gemini_model,
+                        prompt_id="write_summary_v1",
+                        prompt_version="3",
+                        input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
+                        output_hash=sha256(b"").hexdigest(),
+                        latency_ms=latency_ms,
+                        status="error",
+                        error="Transcript cache miss for summary_text.",
+                        created_at=datetime.utcnow(),
+                    )
+                )
+                record_llm_usage(
+                    session,
+                    run_id=run.id,
+                    session_id=session_id,
+                    prompt_id="write_summary_v1",
+                    prompt_version="3",
+                    call_kind="summary_text",
+                    usage=usage,
+                    cache_name=cache_name,
+                    metadata=usage_meta,
+                )
+                raise CacheRequiredError("Transcript cache miss for summary_text.")
             session.add(
                 LLMCall(
                     run_id=run.id,
@@ -320,7 +459,7 @@ async def write_summary_activity(payload: dict) -> dict:
                     kind="summary_text",
                     model=settings.gemini_model,
                     prompt_id="write_summary_v1",
-                    prompt_version="2",
+                    prompt_version="3",
                     input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
                     output_hash=sha256(summary_text.encode("utf-8")).hexdigest(),
                     latency_ms=latency_ms,
@@ -333,11 +472,15 @@ async def write_summary_activity(payload: dict) -> dict:
                 run_id=run.id,
                 session_id=session_id,
                 prompt_id="write_summary_v1",
-                prompt_version="2",
+                prompt_version="3",
                 call_kind="summary_text",
                 usage=usage,
                 cache_name=cache_name,
+                metadata=usage_meta,
             )
+        except CacheRequiredError:
+            session.commit()
+            raise
         except Exception as exc:
             latency_ms = int((time.monotonic() - start) * 1000)
             session.add(
@@ -347,7 +490,7 @@ async def write_summary_activity(payload: dict) -> dict:
                     kind="summary_text",
                     model=settings.gemini_model,
                     prompt_id="write_summary_v1",
-                    prompt_version="2",
+                    prompt_version="3",
                     input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
                     output_hash=sha256(b"").hexdigest(),
                     latency_ms=latency_ms,
@@ -358,7 +501,14 @@ async def write_summary_activity(payload: dict) -> dict:
             )
             session.commit()
             raise
-        _validate_summary_quotes(summary_text, list(quote_lookup.values()))
+        try:
+            _validate_summary_quotes(summary_text, list(quote_lookup.values()))
+        except ValueError:
+            summary_text = _strip_unapproved_quotes(
+                summary_text,
+                list(quote_lookup.values()),
+            )
+            _validate_summary_quotes(summary_text, list(quote_lookup.values()))
 
         summary_record = SessionExtraction(
             run_id=run.id,
@@ -366,7 +516,7 @@ async def write_summary_activity(payload: dict) -> dict:
             kind="summary_text",
             model=settings.gemini_model,
             prompt_id="write_summary_v1",
-            prompt_version="2",
+            prompt_version="3",
             payload={"text": summary_text},
             created_at=datetime.utcnow(),
         )
@@ -377,7 +527,6 @@ async def write_summary_activity(payload: dict) -> dict:
 
 @activity.defn
 async def render_summary_docx_activity(payload: dict) -> dict:
-    Base.metadata.create_all(bind=ENGINE)
     run_id = payload["run_id"]
     session_id = payload["session_id"]
 

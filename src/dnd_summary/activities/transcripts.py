@@ -10,9 +10,8 @@ from temporalio import activity
 
 from dnd_summary.campaign_config import CampaignConfig, load_campaign_config, speaker_alias_map
 from dnd_summary.config import settings
-from dnd_summary.db import ENGINE, get_session
+from dnd_summary.db import get_session
 from dnd_summary.models import (
-    Base,
     Campaign,
     Entity,
     EntityAlias,
@@ -170,7 +169,6 @@ async def ingest_transcript_activity(payload: dict) -> dict:
     src = _find_transcript_source(session_dir)
     transcript_path = Path(src.path)
 
-    Base.metadata.create_all(bind=ENGINE)
 
     transcript_hash = sha256(transcript_path.read_bytes()).hexdigest()
     utterances = parse_transcript(transcript_path)

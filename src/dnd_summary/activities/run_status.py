@@ -4,13 +4,12 @@ from datetime import datetime
 
 from temporalio import activity
 
-from dnd_summary.db import ENGINE, get_session
-from dnd_summary.models import Base, Run
+from dnd_summary.db import get_session
+from dnd_summary.models import Run
 
 
 @activity.defn
 async def update_run_status_activity(payload: dict) -> dict:
-    Base.metadata.create_all(bind=ENGINE)
     run_id = payload["run_id"]
     status = payload["status"]
 

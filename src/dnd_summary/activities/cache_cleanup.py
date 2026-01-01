@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from temporalio import activity
 
 from dnd_summary.config import settings
-from dnd_summary.db import ENGINE, get_session
-from dnd_summary.models import Base, Run, SessionExtraction
+from dnd_summary.db import get_session
+from dnd_summary.models import Run, SessionExtraction
 
 
 def _should_release(status: str | None) -> bool:
@@ -21,7 +21,6 @@ def _should_release(status: str | None) -> bool:
 
 @activity.defn
 async def release_transcript_cache_activity(payload: dict) -> dict:
-    Base.metadata.create_all(bind=ENGINE)
     run_id = payload["run_id"]
     status = payload.get("status")
 

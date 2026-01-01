@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from temporalio import activity
 
-from dnd_summary.db import ENGINE, get_session
+from dnd_summary.db import get_session
 from dnd_summary.models import (
-    Base,
     Event,
     Mention,
     Quote,
@@ -267,7 +266,6 @@ def _count_update_evidence_missing_spans(updates: list) -> int:
 
 @activity.defn
 async def persist_session_facts_activity(payload: dict) -> dict:
-    Base.metadata.create_all(bind=ENGINE)
     run_id = payload["run_id"]
     session_id = payload["session_id"]
 

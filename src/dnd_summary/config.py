@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3-flash"
     enable_explicit_cache: bool = True
+    require_transcript_cache: bool = True
+    transcript_format_version: str = "timecode_v1"
     cache_ttl_seconds: int = 3600
     cache_release_on_complete: bool = True
     cache_release_on_partial: bool = True
@@ -29,6 +31,10 @@ class Settings(BaseSettings):
     min_quotes: int = 6
     max_quotes: int = 12
     min_events: int = 8
+    llm_input_cost_per_million: float = 0.50
+    llm_output_cost_per_million: float = 3.00
+    llm_cached_cost_per_million: float = 0.05
+    llm_cache_storage_cost_per_million_hour: float = 1.00
 
 
 settings = Settings()

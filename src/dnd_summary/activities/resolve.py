@@ -3,8 +3,8 @@ from __future__ import annotations
 from temporalio import activity
 from sqlalchemy import func
 
-from dnd_summary.db import ENGINE, get_session
-from dnd_summary.models import Base, Entity, EntityAlias, EntityMention, Mention, Run
+from dnd_summary.db import get_session
+from dnd_summary.models import Entity, EntityAlias, EntityMention, Mention, Run
 
 
 def _normalize_key(text: str) -> str:
@@ -13,7 +13,6 @@ def _normalize_key(text: str) -> str:
 
 @activity.defn
 async def resolve_entities_activity(payload: dict) -> dict:
-    Base.metadata.create_all(bind=ENGINE)
     run_id = payload["run_id"]
     session_id = payload["session_id"]
 
