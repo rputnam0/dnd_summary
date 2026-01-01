@@ -34,6 +34,45 @@ def _load_prompt(prompt_name: str) -> str:
     return prompt_path.read_text(encoding="utf-8")
 
 
+SUMMARY_VARIANTS = [
+    {
+        "kind": "summary_text",
+        "prompt": "write_summary_v1.txt",
+        "prompt_version": "3",
+        "artifact_prefix": "summary",
+        "title": "Session Summary",
+    },
+    {
+        "kind": "summary_player",
+        "prompt": "write_summary_player_v1.txt",
+        "prompt_version": "1",
+        "artifact_prefix": "summary_player",
+        "title": "Player Recap",
+    },
+    {
+        "kind": "summary_dm",
+        "prompt": "write_summary_dm_v1.txt",
+        "prompt_version": "1",
+        "artifact_prefix": "summary_dm",
+        "title": "DM Prep",
+    },
+    {
+        "kind": "summary_hooks",
+        "prompt": "write_summary_hooks_v1.txt",
+        "prompt_version": "1",
+        "artifact_prefix": "summary_hooks",
+        "title": "Next Session Hooks",
+    },
+    {
+        "kind": "summary_npc_changes",
+        "prompt": "write_summary_npc_changes_v1.txt",
+        "prompt_version": "1",
+        "artifact_prefix": "summary_npc_changes",
+        "title": "NPC Roster Changes",
+    },
+]
+
+
 def _quote_text(utterance: str, quote: Quote) -> str:
     if quote.clean_text:
         return quote.clean_text.strip()
@@ -399,47 +438,80 @@ async def write_summary_activity(payload: dict) -> dict:
             plan_stats = build_text_metrics("summary_plan", plan_json)
             base_usage["quote_ids_count"] = len(quote_ids)
 
-            prompt = _load_prompt("write_summary_v1.txt").format(
-                summary_plan=plan_json,
-                session_facts=facts_json,
-                quote_bank=quote_bank or "[none]",
-                character_map=json.dumps(character_map, sort_keys=True),
-                transcript_block=transcript_block,
-            )
-            prompt_stats = build_text_metrics("prompt", prompt)
-            usage_meta = {
-                **transcript_stats,
-                **quote_bank_stats,
-                **facts_stats,
-                **plan_stats,
-                **prompt_stats,
-                **base_usage,
-            }
-
             client = LLMClient()
-            start = time.monotonic()
-            try:
-                summary_text, usage = client.generate_text(
-                    prompt,
-                    cached_content=cache_name,
-                    return_usage=True,
+            summaries: dict[str, str] = {}
+
+            for variant in SUMMARY_VARIANTS:
+                prompt = _load_prompt(variant["prompt"]).format(
+                    summary_plan=plan_json,
+                    session_facts=facts_json,
+                    quote_bank=quote_bank or "[none]",
+                    character_map=json.dumps(character_map, sort_keys=True),
+                    transcript_block=transcript_block,
                 )
-                latency_ms = int((time.monotonic() - start) * 1000)
-                cache_hit = cache_hit_from_usage(usage, cache_name)
-                if settings.require_transcript_cache and not cache_hit:
+                prompt_stats = build_text_metrics("prompt", prompt)
+                usage_meta = {
+                    **transcript_stats,
+                    **quote_bank_stats,
+                    **facts_stats,
+                    **plan_stats,
+                    **prompt_stats,
+                    **base_usage,
+                    "summary_variant": variant["kind"],
+                }
+
+                start = time.monotonic()
+                try:
+                    summary_text, usage = client.generate_text(
+                        prompt,
+                        cached_content=cache_name,
+                        return_usage=True,
+                    )
+                    latency_ms = int((time.monotonic() - start) * 1000)
+                    cache_hit = cache_hit_from_usage(usage, cache_name)
+                    if settings.require_transcript_cache and not cache_hit:
+                        session.add(
+                            LLMCall(
+                                run_id=run.id,
+                                session_id=session_id,
+                                kind=variant["kind"],
+                                model=settings.gemini_model,
+                                prompt_id=variant["prompt"],
+                                prompt_version=variant["prompt_version"],
+                                input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
+                                output_hash=sha256(b"").hexdigest(),
+                                latency_ms=latency_ms,
+                                status="error",
+                                error=f"Transcript cache miss for {variant['kind']}.",
+                                created_at=datetime.utcnow(),
+                            )
+                        )
+                        record_llm_usage(
+                            session,
+                            run_id=run.id,
+                            session_id=session_id,
+                            prompt_id=variant["prompt"],
+                            prompt_version=variant["prompt_version"],
+                            call_kind=variant["kind"],
+                            usage=usage,
+                            cache_name=cache_name,
+                            metadata=usage_meta,
+                        )
+                        raise CacheRequiredError(
+                            f"Transcript cache miss for {variant['kind']}."
+                        )
                     session.add(
                         LLMCall(
                             run_id=run.id,
                             session_id=session_id,
-                            kind="summary_text",
+                            kind=variant["kind"],
                             model=settings.gemini_model,
-                            prompt_id="write_summary_v1",
-                            prompt_version="3",
+                            prompt_id=variant["prompt"],
+                            prompt_version=variant["prompt_version"],
                             input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
-                            output_hash=sha256(b"").hexdigest(),
+                            output_hash=sha256(summary_text.encode("utf-8")).hexdigest(),
                             latency_ms=latency_ms,
-                            status="error",
-                            error="Transcript cache miss for summary_text.",
+                            status="success",
                             created_at=datetime.utcnow(),
                         )
                     )
@@ -447,85 +519,61 @@ async def write_summary_activity(payload: dict) -> dict:
                         session,
                         run_id=run.id,
                         session_id=session_id,
-                        prompt_id="write_summary_v1",
-                        prompt_version="3",
-                        call_kind="summary_text",
+                        prompt_id=variant["prompt"],
+                        prompt_version=variant["prompt_version"],
+                        call_kind=variant["kind"],
                         usage=usage,
                         cache_name=cache_name,
                         metadata=usage_meta,
                     )
-                    raise CacheRequiredError("Transcript cache miss for summary_text.")
-                session.add(
-                    LLMCall(
-                        run_id=run.id,
-                        session_id=session_id,
-                        kind="summary_text",
-                        model=settings.gemini_model,
-                        prompt_id="write_summary_v1",
-                        prompt_version="3",
-                        input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
-                        output_hash=sha256(summary_text.encode("utf-8")).hexdigest(),
-                        latency_ms=latency_ms,
-                        status="success",
-                        created_at=datetime.utcnow(),
+                except CacheRequiredError:
+                    session.commit()
+                    raise
+                except Exception as exc:
+                    latency_ms = int((time.monotonic() - start) * 1000)
+                    session.add(
+                        LLMCall(
+                            run_id=run.id,
+                            session_id=session_id,
+                            kind=variant["kind"],
+                            model=settings.gemini_model,
+                            prompt_id=variant["prompt"],
+                            prompt_version=variant["prompt_version"],
+                            input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
+                            output_hash=sha256(b"").hexdigest(),
+                            latency_ms=latency_ms,
+                            status="error",
+                            error=str(exc)[:2000],
+                            created_at=datetime.utcnow(),
+                        )
                     )
-                )
-                record_llm_usage(
-                    session,
+                    session.commit()
+                    raise
+
+                try:
+                    _validate_summary_quotes(summary_text, list(quote_lookup.values()))
+                except ValueError:
+                    summary_text = _strip_unapproved_quotes(
+                        summary_text,
+                        list(quote_lookup.values()),
+                    )
+                    _validate_summary_quotes(summary_text, list(quote_lookup.values()))
+
+                summary_record = SessionExtraction(
                     run_id=run.id,
                     session_id=session_id,
-                    prompt_id="write_summary_v1",
-                    prompt_version="3",
-                    call_kind="summary_text",
-                    usage=usage,
-                    cache_name=cache_name,
-                    metadata=usage_meta,
+                    kind=variant["kind"],
+                    model=settings.gemini_model,
+                    prompt_id=variant["prompt"],
+                    prompt_version=variant["prompt_version"],
+                    payload={"text": summary_text},
+                    created_at=datetime.utcnow(),
                 )
-            except CacheRequiredError:
-                session.commit()
-                raise
-            except Exception as exc:
-                latency_ms = int((time.monotonic() - start) * 1000)
-                session.add(
-                    LLMCall(
-                        run_id=run.id,
-                        session_id=session_id,
-                        kind="summary_text",
-                        model=settings.gemini_model,
-                        prompt_id="write_summary_v1",
-                        prompt_version="3",
-                        input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
-                        output_hash=sha256(b"").hexdigest(),
-                        latency_ms=latency_ms,
-                        status="error",
-                        error=str(exc)[:2000],
-                        created_at=datetime.utcnow(),
-                    )
-                )
-                session.commit()
-                raise
-            try:
-                _validate_summary_quotes(summary_text, list(quote_lookup.values()))
-            except ValueError:
-                summary_text = _strip_unapproved_quotes(
-                    summary_text,
-                    list(quote_lookup.values()),
-                )
-                _validate_summary_quotes(summary_text, list(quote_lookup.values()))
+                session.add(summary_record)
+                summaries[variant["kind"]] = summary_text
 
-            summary_record = SessionExtraction(
-                run_id=run.id,
-                session_id=session_id,
-                kind="summary_text",
-                model=settings.gemini_model,
-                prompt_id="write_summary_v1",
-                prompt_version="3",
-                payload={"text": summary_text},
-                created_at=datetime.utcnow(),
-            )
-            session.add(summary_record)
-
-        return {"run_id": run_id, "session_id": session_id, "chars": len(summary_text)}
+        chars = sum(len(text) for text in summaries.values())
+        return {"run_id": run_id, "session_id": session_id, "chars": chars}
 
 
 @activity.defn
@@ -535,44 +583,61 @@ async def render_summary_docx_activity(payload: dict) -> dict:
     with run_step(run_id, session_id, "render_summary_docx"):
 
         with get_session() as session:
-            summary_record = (
+            summary_records = (
                 session.query(SessionExtraction)
-                .filter_by(run_id=run_id, session_id=session_id, kind="summary_text")
+                .filter(
+                    SessionExtraction.run_id == run_id,
+                    SessionExtraction.session_id == session_id,
+                    SessionExtraction.kind.in_([variant["kind"] for variant in SUMMARY_VARIANTS]),
+                )
                 .order_by(SessionExtraction.created_at.desc())
-                .first()
+                .all()
             )
-            if not summary_record:
+            if not summary_records:
                 raise ValueError("Missing summary_text extraction")
-            summary_text = summary_record.payload["text"]
+
+            summary_by_kind = {}
+            for record in summary_records:
+                if record.kind in summary_by_kind:
+                    continue
+                summary_by_kind[record.kind] = record
 
             output_dir = Path(settings.artifacts_root) / session_id
             output_dir.mkdir(parents=True, exist_ok=True)
-            txt_path = output_dir / "summary.txt"
-            txt_path.write_text(summary_text, encoding="utf-8")
-            output_path = output_dir / "summary.docx"
-            render_summary_docx(summary_text, output_path)
-
-            artifact = Artifact(
-                run_id=run_id,
-                session_id=session_id,
-                kind="summary_docx",
-                path=str(output_path),
-                meta={"bytes": output_path.stat().st_size},
-                created_at=datetime.utcnow(),
-            )
-            txt_artifact = Artifact(
-                run_id=run_id,
-                session_id=session_id,
-                kind="summary_txt",
-                path=str(txt_path),
-                meta={"bytes": txt_path.stat().st_size},
-                created_at=datetime.utcnow(),
-            )
-            session.add_all([artifact, txt_artifact])
+            artifacts: list[Artifact] = []
+            for variant in SUMMARY_VARIANTS:
+                record = summary_by_kind.get(variant["kind"])
+                if not record:
+                    continue
+                summary_text = record.payload["text"]
+                txt_path = output_dir / f"{variant['artifact_prefix']}.txt"
+                txt_path.write_text(summary_text, encoding="utf-8")
+                output_path = output_dir / f"{variant['artifact_prefix']}.docx"
+                render_summary_docx(summary_text, output_path, title=variant["title"])
+                artifacts.append(
+                    Artifact(
+                        run_id=run_id,
+                        session_id=session_id,
+                        kind=f"{variant['artifact_prefix']}_docx",
+                        path=str(output_path),
+                        meta={"bytes": output_path.stat().st_size},
+                        created_at=datetime.utcnow(),
+                    )
+                )
+                artifacts.append(
+                    Artifact(
+                        run_id=run_id,
+                        session_id=session_id,
+                        kind=f"{variant['artifact_prefix']}_txt",
+                        path=str(txt_path),
+                        meta={"bytes": txt_path.stat().st_size},
+                        created_at=datetime.utcnow(),
+                    )
+                )
+            session.add_all(artifacts)
 
         return {
             "run_id": run_id,
             "session_id": session_id,
-            "path": str(output_path),
-            "text_path": str(txt_path),
+            "variants": list(summary_by_kind.keys()),
         }

@@ -1,0 +1,23 @@
+You are writing an NPC roster changes summary for a D&D session.
+
+Use only the provided session facts, summary plan, and quote bank.
+
+Session facts:
+{session_facts}
+
+Summary plan:
+{summary_plan}
+
+Quote bank:
+{quote_bank}
+
+Character map:
+{character_map}
+
+Transcript:
+{transcript_block}
+
+Requirements:
+- Use "##" headings for Added, Updated, Removed.
+- Use "-" bullet lines with the NPC name and the change.
+- If nothing changed, include a single "## Added" section with "- None".

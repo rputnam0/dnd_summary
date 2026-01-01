@@ -31,6 +31,7 @@
 - Player notes + bookmarks scoping fix for authenticated requests
 - Comprehensive pytest suite for API/CLI/activities/parsing
 - Embeddings storage + semantic retrieval + ask-campaign endpoint
+- Summary variants (player/DM/hooks/NPC changes) + improved DOCX rendering
 
 ## Roadmap (commit-sized)
 
@@ -277,11 +278,11 @@ Suggested default settings (local, RTX 5080-class)
 - `SEMANTIC_FINAL_K=15`
 
 ### Phase 8: Narrative outputs (more than one recap)
-29) Commit: Summary variants
+29) Commit: Summary variants (done)
    - Outputs: player recap, DM prep, “next session hooks”, “NPC roster changes”.
    - Acceptance: same run produces multiple artifacts, each grounded by evidence.
 
-30) Commit: Improve DOCX rendering (structure + styling)
+30) Commit: Improve DOCX rendering (structure + styling) (done)
    - Use headings, scene breaks, quote callouts, appendices for loot/quests.
    - Acceptance: exported doc is readable and consistently formatted.
 

@@ -1,0 +1,23 @@
+You are writing a DM prep summary for a D&D session.
+
+Use only the provided session facts, summary plan, and quote bank.
+
+Session facts:
+{session_facts}
+
+Summary plan:
+{summary_plan}
+
+Quote bank:
+{quote_bank}
+
+Character map:
+{character_map}
+
+Transcript:
+{transcript_block}
+
+Requirements:
+- Output bullet-heavy prep notes.
+- Use "##" headings for sections (Notable Events, Open Threads, NPCs/Locations, Risks).
+- Use "-" bullet lines for key items.

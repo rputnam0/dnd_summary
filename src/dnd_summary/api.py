@@ -2566,12 +2566,28 @@ def get_summary(
     with get_session() as session:
         _session_for_id(session, session_id, request)
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
-        summary = (
+        summary_kinds = {
+            "summary_text",
+            "summary_player",
+            "summary_dm",
+            "summary_hooks",
+            "summary_npc_changes",
+        }
+        summaries = (
             session.query(SessionExtraction)
-            .filter_by(session_id=session_id, run_id=resolved_run_id, kind="summary_text")
+            .filter(
+                SessionExtraction.session_id == session_id,
+                SessionExtraction.run_id == resolved_run_id,
+                SessionExtraction.kind.in_(summary_kinds),
+            )
             .order_by(SessionExtraction.created_at.desc())
-            .first()
+            .all()
         )
+        summary_by_kind = {}
+        for record in summaries:
+            if record.kind in summary_by_kind:
+                continue
+            summary_by_kind[record.kind] = record
         persist_metrics = (
             session.query(SessionExtraction)
             .filter_by(session_id=session_id, run_id=resolved_run_id, kind="persist_metrics")
@@ -2602,9 +2618,18 @@ def get_summary(
             .order_by(RunStep.started_at.asc(), RunStep.id.asc())
             .all()
         )
-        if not summary:
+        if not summary_by_kind:
             raise HTTPException(status_code=404, detail="Summary not found")
-        return {"text": summary.payload.get("text", "")}
+        summary_text = summary_by_kind.get("summary_text")
+        variants = {
+            kind: record.payload.get("text", "")
+            for kind, record in summary_by_kind.items()
+            if record.payload
+        }
+        return {
+            "text": summary_text.payload.get("text", "") if summary_text else "",
+            "variants": variants,
+        }
 
 
 @app.get("/sessions/{session_id}/export")

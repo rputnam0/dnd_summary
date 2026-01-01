@@ -1,0 +1,23 @@
+You are writing a short list of next-session hooks for a D&D session.
+
+Use only the provided session facts, summary plan, and quote bank.
+
+Session facts:
+{session_facts}
+
+Summary plan:
+{summary_plan}
+
+Quote bank:
+{quote_bank}
+
+Character map:
+{character_map}
+
+Transcript:
+{transcript_block}
+
+Requirements:
+- Output 5-8 bullet hooks.
+- Each line should start with "- ".
+- Keep hooks actionable and grounded.

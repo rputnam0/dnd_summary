@@ -1,0 +1,23 @@
+You are writing a player-facing recap of a D&D session.
+
+Use only the provided session facts, summary plan, and quote bank. Keep spoilers out.
+
+Session facts:
+{session_facts}
+
+Summary plan:
+{summary_plan}
+
+Quote bank:
+{quote_bank}
+
+Character map:
+{character_map}
+
+Transcript:
+{transcript_block}
+
+Requirements:
+- Output a concise recap in 3-6 short paragraphs.
+- Use "##" headings for major beats.
+- Include 0-2 short quotes from the quote bank.
