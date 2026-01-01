@@ -114,7 +114,7 @@ the repo in a working state.
    - Acceptance: quest journal has stable IDs and reliable history across sessions.
 
 ### Phase 4: DM correction loop (turn extraction into trusted canonical state)
-17) Commit: Add “corrections” tables (auditable overrides)
+17) Commit: Add “corrections” tables (auditable overrides) (done)
    - Store edits as events: entity rename/merge/hide, alias add/remove; thread status/title merge; redactions.
    - Acceptance: corrections are persisted, reversible, and attributed (even if “local_user” initially).
 

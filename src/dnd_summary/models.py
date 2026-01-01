@@ -33,6 +33,7 @@ class Campaign(Base):
     sessions = relationship("Session", back_populates="campaign")
     participants = relationship("Participant", back_populates="campaign")
     campaign_threads = relationship("CampaignThread", back_populates="campaign")
+    corrections = relationship("Correction", back_populates="campaign")
 
 
 class Session(Base):
@@ -50,6 +51,7 @@ class Session(Base):
     runs = relationship("Run", back_populates="session")
     utterances = relationship("Utterance", back_populates="session")
     current_run = relationship("Run", foreign_keys=[current_run_id])
+    corrections = relationship("Correction", back_populates="session")
 
     __table_args__ = (UniqueConstraint("campaign_id", "slug", name="uq_session_campaign_slug"),)
 
@@ -300,6 +302,23 @@ class ThreadUpdate(Base):
     evidence: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     related_event_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class Correction(Base):
+    __tablename__ = "corrections"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False)
+    session_id: Mapped[str | None] = mapped_column(ForeignKey("sessions.id"), nullable=True)
+    target_type: Mapped[str] = mapped_column(String, nullable=False)
+    target_id: Mapped[str] = mapped_column(String, nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    campaign = relationship("Campaign", back_populates="corrections")
+    session = relationship("Session", back_populates="corrections")
 
 
 class Entity(Base):
