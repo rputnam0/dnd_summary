@@ -16,6 +16,7 @@ from dnd_summary.models import (
 import re
 from difflib import SequenceMatcher
 
+from dnd_summary.run_steps import run_step
 from dnd_summary.schemas import EvidenceSpan, SessionFacts
 
 
@@ -269,278 +270,279 @@ async def persist_session_facts_activity(payload: dict) -> dict:
     run_id = payload["run_id"]
     session_id = payload["session_id"]
 
-    with get_session() as session:
-        extraction = (
-            session.query(SessionExtraction)
-            .filter_by(run_id=run_id, session_id=session_id, kind="session_facts")
-            .order_by(SessionExtraction.created_at.desc())
-            .first()
-        )
-        if not extraction:
-            raise ValueError("Missing session_facts extraction")
+    with run_step(run_id, session_id, "persist_session_facts"):
+        with get_session() as session:
+            extraction = (
+                session.query(SessionExtraction)
+                .filter_by(run_id=run_id, session_id=session_id, kind="session_facts")
+                .order_by(SessionExtraction.created_at.desc())
+                .first()
+            )
+            if not extraction:
+                raise ValueError("Missing session_facts extraction")
 
-        facts = SessionFacts.model_validate(extraction.payload)
-        utterances = (
-            session.query(Utterance)
-            .filter_by(session_id=session_id)
-            .order_by(Utterance.start_ms.asc(), Utterance.id.asc())
-            .all()
-        )
-        utterance_lookup = {utt.id: utt.text for utt in utterances}
-        (
-            cleaned_quotes,
-            dropped_quotes,
-            clean_text_dropped,
-            quotes_clamped,
-            quotes_deduped,
-        ) = _clean_quotes(
-            utterance_lookup, utterances, facts
-        )
+            facts = SessionFacts.model_validate(extraction.payload)
+            utterances = (
+                session.query(Utterance)
+                .filter_by(session_id=session_id)
+                .order_by(Utterance.start_ms.asc(), Utterance.id.asc())
+                .all()
+            )
+            utterance_lookup = {utt.id: utt.text for utt in utterances}
+            (
+                cleaned_quotes,
+                dropped_quotes,
+                clean_text_dropped,
+                quotes_clamped,
+                quotes_deduped,
+            ) = _clean_quotes(
+                utterance_lookup, utterances, facts
+            )
 
-        for model in (Mention, Scene, Event, Quote, Thread, ThreadUpdate):
-            session.query(model).filter_by(run_id=run_id, session_id=session_id).delete()
+            for model in (Mention, Scene, Event, Quote, Thread, ThreadUpdate):
+                session.query(model).filter_by(run_id=run_id, session_id=session_id).delete()
 
-        dropped_evidence = 0
-        clamped_evidence = 0
-        for mention in facts.mentions:
-            mention.evidence, dropped, clamped = _clean_evidence(
-                utterance_lookup, mention.evidence
-            )
-            dropped_evidence += dropped
-            clamped_evidence += clamped
-        for scene in facts.scenes:
-            scene.evidence, dropped, clamped = _clean_evidence(
-                utterance_lookup, scene.evidence
-            )
-            dropped_evidence += dropped
-            clamped_evidence += clamped
-        for event in facts.events:
-            event.evidence, dropped, clamped = _clean_evidence(
-                utterance_lookup, event.evidence
-            )
-            dropped_evidence += dropped
-            clamped_evidence += clamped
-        for thread in facts.threads:
-            thread.evidence, dropped, clamped = _clean_evidence(
-                utterance_lookup, thread.evidence
-            )
-            dropped_evidence += dropped
-            clamped_evidence += clamped
-            for update in thread.updates:
-                update.evidence, dropped, clamped = _clean_evidence(
-                    utterance_lookup, update.evidence
+            dropped_evidence = 0
+            clamped_evidence = 0
+            for mention in facts.mentions:
+                mention.evidence, dropped, clamped = _clean_evidence(
+                    utterance_lookup, mention.evidence
                 )
                 dropped_evidence += dropped
                 clamped_evidence += clamped
-
-        for scene in facts.scenes:
-            if not scene.evidence:
-                fallback = _fallback_span_by_time(
-                    utterances, scene.start_ms, scene.end_ms
+            for scene in facts.scenes:
+                scene.evidence, dropped, clamped = _clean_evidence(
+                    utterance_lookup, scene.evidence
                 )
-                if fallback:
-                    scene.evidence = [fallback]
-
-        for event in facts.events:
-            if not event.evidence:
-                fallback = _fallback_span_by_time(
-                    utterances, event.start_ms, event.end_ms
+                dropped_evidence += dropped
+                clamped_evidence += clamped
+            for event in facts.events:
+                event.evidence, dropped, clamped = _clean_evidence(
+                    utterance_lookup, event.evidence
                 )
-                if fallback:
-                    event.evidence = [fallback]
-
-        for thread in facts.threads:
-            if not thread.evidence:
+                dropped_evidence += dropped
+                clamped_evidence += clamped
+            for thread in facts.threads:
+                thread.evidence, dropped, clamped = _clean_evidence(
+                    utterance_lookup, thread.evidence
+                )
+                dropped_evidence += dropped
+                clamped_evidence += clamped
                 for update in thread.updates:
-                    if update.evidence:
-                        thread.evidence = update.evidence
-                        break
-            for update in thread.updates:
-                if update.evidence or not update.related_event_indexes:
-                    continue
-                for idx in update.related_event_indexes:
-                    if 0 <= idx < len(facts.events):
-                        event_evidence = facts.events[idx].evidence
-                        if event_evidence:
-                            update.evidence = event_evidence
-                            break
-
-        mention_repairs = 0
-        mentions_dropped = 0
-        repaired_mentions = []
-        for mention in facts.mentions:
-            if not mention.evidence:
-                repaired = _find_mention_span(utterances, mention.text)
-                if repaired:
-                    mention.evidence = [repaired]
-                    mention_repairs += 1
-            if not mention.evidence:
-                mentions_dropped += 1
-                continue
-            repaired_mentions.append(mention)
-        facts.mentions = repaired_mentions
-
-        mentions = [
-            Mention(
-                run_id=run_id,
-                session_id=session_id,
-                text=mention.text,
-                entity_type=mention.entity_type,
-                description=mention.description,
-                evidence=[e.model_dump(mode="json") for e in mention.evidence],
-                confidence=mention.confidence,
-            )
-            for mention in facts.mentions
-        ]
-        scenes = [
-            Scene(
-                run_id=run_id,
-                session_id=session_id,
-                title=scene.title,
-                summary=scene.summary,
-                location=scene.location,
-                start_ms=scene.start_ms,
-                end_ms=scene.end_ms,
-                participants=scene.participants,
-                evidence=[e.model_dump(mode="json") for e in scene.evidence],
-            )
-            for scene in facts.scenes
-        ]
-        events = [
-            Event(
-                run_id=run_id,
-                session_id=session_id,
-                event_type=event.event_type,
-                summary=event.summary,
-                start_ms=event.start_ms,
-                end_ms=event.end_ms,
-                entities=event.entities,
-                evidence=[e.model_dump(mode="json") for e in event.evidence],
-                confidence=event.confidence,
-            )
-            for event in facts.events
-        ]
-        quotes = [
-            Quote(
-                run_id=run_id,
-                session_id=session_id,
-                utterance_id=quote.utterance_id,
-                char_start=quote.char_start,
-                char_end=quote.char_end,
-                speaker=quote.speaker,
-                note=quote.note,
-                clean_text=quote.clean_text,
-            )
-            for quote in cleaned_quotes
-        ]
-
-        session.add_all(mentions)
-        session.add_all(scenes)
-        session.add_all(events)
-        session.add_all(quotes)
-        session.flush()
-
-        thread_rows = []
-        thread_updates = []
-        event_index_to_id = {idx: event.id for idx, event in enumerate(events)}
-        for thread in facts.threads:
-            thread_row = Thread(
-                run_id=run_id,
-                session_id=session_id,
-                title=thread.title,
-                kind=thread.kind,
-                status=thread.status,
-                summary=thread.summary,
-                evidence=[e.model_dump(mode="json") for e in thread.evidence],
-                confidence=thread.confidence,
-            )
-            session.add(thread_row)
-            session.flush()
-            thread_rows.append(thread_row)
-
-            for update in thread.updates:
-                related_ids = []
-                for idx in update.related_event_indexes:
-                    event_id = event_index_to_id.get(idx)
-                    if event_id:
-                        related_ids.append(event_id)
-                thread_updates.append(
-                    ThreadUpdate(
-                        run_id=run_id,
-                        session_id=session_id,
-                        thread_id=thread_row.id,
-                        update_type=update.update_type,
-                        note=update.note,
-                        evidence=[e.model_dump(mode="json") for e in update.evidence],
-                        related_event_ids=related_ids,
+                    update.evidence, dropped, clamped = _clean_evidence(
+                        utterance_lookup, update.evidence
                     )
+                    dropped_evidence += dropped
+                    clamped_evidence += clamped
+
+            for scene in facts.scenes:
+                if not scene.evidence:
+                    fallback = _fallback_span_by_time(
+                        utterances, scene.start_ms, scene.end_ms
+                    )
+                    if fallback:
+                        scene.evidence = [fallback]
+
+            for event in facts.events:
+                if not event.evidence:
+                    fallback = _fallback_span_by_time(
+                        utterances, event.start_ms, event.end_ms
+                    )
+                    if fallback:
+                        event.evidence = [fallback]
+
+            for thread in facts.threads:
+                if not thread.evidence:
+                    for update in thread.updates:
+                        if update.evidence:
+                            thread.evidence = update.evidence
+                            break
+                for update in thread.updates:
+                    if update.evidence or not update.related_event_indexes:
+                        continue
+                    for idx in update.related_event_indexes:
+                        if 0 <= idx < len(facts.events):
+                            event_evidence = facts.events[idx].evidence
+                            if event_evidence:
+                                update.evidence = event_evidence
+                                break
+
+            mention_repairs = 0
+            mentions_dropped = 0
+            repaired_mentions = []
+            for mention in facts.mentions:
+                if not mention.evidence:
+                    repaired = _find_mention_span(utterances, mention.text)
+                    if repaired:
+                        mention.evidence = [repaired]
+                        mention_repairs += 1
+                if not mention.evidence:
+                    mentions_dropped += 1
+                    continue
+                repaired_mentions.append(mention)
+            facts.mentions = repaired_mentions
+
+            mentions = [
+                Mention(
+                    run_id=run_id,
+                    session_id=session_id,
+                    text=mention.text,
+                    entity_type=mention.entity_type,
+                    description=mention.description,
+                    evidence=[e.model_dump(mode="json") for e in mention.evidence],
+                    confidence=mention.confidence,
                 )
+                for mention in facts.mentions
+            ]
+            scenes = [
+                Scene(
+                    run_id=run_id,
+                    session_id=session_id,
+                    title=scene.title,
+                    summary=scene.summary,
+                    location=scene.location,
+                    start_ms=scene.start_ms,
+                    end_ms=scene.end_ms,
+                    participants=scene.participants,
+                    evidence=[e.model_dump(mode="json") for e in scene.evidence],
+                )
+                for scene in facts.scenes
+            ]
+            events = [
+                Event(
+                    run_id=run_id,
+                    session_id=session_id,
+                    event_type=event.event_type,
+                    summary=event.summary,
+                    start_ms=event.start_ms,
+                    end_ms=event.end_ms,
+                    entities=event.entities,
+                    evidence=[e.model_dump(mode="json") for e in event.evidence],
+                    confidence=event.confidence,
+                )
+                for event in facts.events
+            ]
+            quotes = [
+                Quote(
+                    run_id=run_id,
+                    session_id=session_id,
+                    utterance_id=quote.utterance_id,
+                    char_start=quote.char_start,
+                    char_end=quote.char_end,
+                    speaker=quote.speaker,
+                    note=quote.note,
+                    clean_text=quote.clean_text,
+                )
+                for quote in cleaned_quotes
+            ]
 
-        if thread_updates:
-            session.add_all(thread_updates)
+            session.add_all(mentions)
+            session.add_all(scenes)
+            session.add_all(events)
+            session.add_all(quotes)
+            session.flush()
 
-        metrics = {
-            "mentions": len(facts.mentions),
-            "scenes": len(facts.scenes),
-            "events": len(facts.events),
-            "threads": len(facts.threads),
-            "quotes": len(cleaned_quotes),
-            "quotes_dropped": dropped_quotes,
-            "quotes_deduped": quotes_deduped,
-            "quotes_clamped": quotes_clamped,
-            "evidence_dropped": dropped_evidence,
-            "evidence_clamped": clamped_evidence,
-            "mentions_repaired": mention_repairs,
-            "mentions_dropped_no_evidence": mentions_dropped,
-            "clean_text_dropped": clean_text_dropped,
-        }
-        metrics_record = SessionExtraction(
-            run_id=run_id,
-            session_id=session_id,
-            kind="persist_metrics",
-            model="system",
-            prompt_id="persist_session_facts",
-            prompt_version="1",
-            payload=metrics,
-        )
-        session.add(metrics_record)
+            thread_rows = []
+            thread_updates = []
+            event_index_to_id = {idx: event.id for idx, event in enumerate(events)}
+            for thread in facts.threads:
+                thread_row = Thread(
+                    run_id=run_id,
+                    session_id=session_id,
+                    title=thread.title,
+                    kind=thread.kind,
+                    status=thread.status,
+                    summary=thread.summary,
+                    evidence=[e.model_dump(mode="json") for e in thread.evidence],
+                    confidence=thread.confidence,
+                )
+                session.add(thread_row)
+                session.flush()
+                thread_rows.append(thread_row)
 
-        quality_report = {
-            "mentions_missing_evidence": _count_missing_evidence(facts.mentions),
-            "scenes_missing_evidence": _count_missing_evidence(facts.scenes),
-            "events_missing_evidence": _count_missing_evidence(facts.events),
-            "threads_missing_evidence": _count_missing_evidence(facts.threads),
-            "thread_updates_missing_evidence": _count_update_missing_evidence(
-                [u for t in facts.threads for u in t.updates]
-            ),
-            "mentions_evidence_missing_spans": _count_evidence_missing_spans(facts.mentions),
-            "scenes_evidence_missing_spans": _count_evidence_missing_spans(facts.scenes),
-            "events_evidence_missing_spans": _count_evidence_missing_spans(facts.events),
-            "threads_evidence_missing_spans": _count_evidence_missing_spans(facts.threads),
-            "thread_updates_evidence_missing_spans": _count_update_evidence_missing_spans(
-                [u for t in facts.threads for u in t.updates]
-            ),
-            "quotes_missing_clean_text": len(
-                [q for q in cleaned_quotes if not q.clean_text]
-            ),
-            "quotes_with_clean_text": len(
-                [q for q in cleaned_quotes if q.clean_text]
-            ),
-        }
-        session.add(
-            SessionExtraction(
+                for update in thread.updates:
+                    related_ids = []
+                    for idx in update.related_event_indexes:
+                        event_id = event_index_to_id.get(idx)
+                        if event_id:
+                            related_ids.append(event_id)
+                    thread_updates.append(
+                        ThreadUpdate(
+                            run_id=run_id,
+                            session_id=session_id,
+                            thread_id=thread_row.id,
+                            update_type=update.update_type,
+                            note=update.note,
+                            evidence=[e.model_dump(mode="json") for e in update.evidence],
+                            related_event_ids=related_ids,
+                        )
+                    )
+
+            if thread_updates:
+                session.add_all(thread_updates)
+
+            metrics = {
+                "mentions": len(facts.mentions),
+                "scenes": len(facts.scenes),
+                "events": len(facts.events),
+                "threads": len(facts.threads),
+                "quotes": len(cleaned_quotes),
+                "quotes_dropped": dropped_quotes,
+                "quotes_deduped": quotes_deduped,
+                "quotes_clamped": quotes_clamped,
+                "evidence_dropped": dropped_evidence,
+                "evidence_clamped": clamped_evidence,
+                "mentions_repaired": mention_repairs,
+                "mentions_dropped_no_evidence": mentions_dropped,
+                "clean_text_dropped": clean_text_dropped,
+            }
+            metrics_record = SessionExtraction(
                 run_id=run_id,
                 session_id=session_id,
-                kind="quality_report",
+                kind="persist_metrics",
                 model="system",
-                prompt_id="quality_report",
+                prompt_id="persist_session_facts",
                 prompt_version="1",
-                payload=quality_report,
+                payload=metrics,
             )
-        )
+            session.add(metrics_record)
 
-    return {
-        "run_id": run_id,
-        "session_id": session_id,
-        **metrics,
-    }
+            quality_report = {
+                "mentions_missing_evidence": _count_missing_evidence(facts.mentions),
+                "scenes_missing_evidence": _count_missing_evidence(facts.scenes),
+                "events_missing_evidence": _count_missing_evidence(facts.events),
+                "threads_missing_evidence": _count_missing_evidence(facts.threads),
+                "thread_updates_missing_evidence": _count_update_missing_evidence(
+                    [u for t in facts.threads for u in t.updates]
+                ),
+                "mentions_evidence_missing_spans": _count_evidence_missing_spans(facts.mentions),
+                "scenes_evidence_missing_spans": _count_evidence_missing_spans(facts.scenes),
+                "events_evidence_missing_spans": _count_evidence_missing_spans(facts.events),
+                "threads_evidence_missing_spans": _count_evidence_missing_spans(facts.threads),
+                "thread_updates_evidence_missing_spans": _count_update_evidence_missing_spans(
+                    [u for t in facts.threads for u in t.updates]
+                ),
+                "quotes_missing_clean_text": len(
+                    [q for q in cleaned_quotes if not q.clean_text]
+                ),
+                "quotes_with_clean_text": len(
+                    [q for q in cleaned_quotes if q.clean_text]
+                ),
+            }
+            session.add(
+                SessionExtraction(
+                    run_id=run_id,
+                    session_id=session_id,
+                    kind="quality_report",
+                    model="system",
+                    prompt_id="quality_report",
+                    prompt_version="1",
+                    payload=quality_report,
+                )
+            )
+
+        return {
+            "run_id": run_id,
+            "session_id": session_id,
+            **metrics,
+        }

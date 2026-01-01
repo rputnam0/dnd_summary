@@ -23,6 +23,7 @@ from dnd_summary.models import (
     Event,
     Quote,
     Run,
+    RunStep,
     Scene,
     Session,
     SessionExtraction,
@@ -1221,6 +1222,12 @@ def get_summary(
             .order_by(SessionExtraction.created_at.asc(), SessionExtraction.id.asc())
             .all()
         )
+        run_steps = (
+            session.query(RunStep)
+            .filter_by(session_id=session_id, run_id=resolved_run_id)
+            .order_by(RunStep.started_at.asc(), RunStep.id.asc())
+            .all()
+        )
         if not summary:
             raise HTTPException(status_code=404, detail="Summary not found")
         return {"text": summary.payload.get("text", "")}
@@ -1505,6 +1512,17 @@ def get_session_bundle(
                 for call in llm_calls
             ],
             "llm_usage": [record.payload for record in llm_usage],
+            "run_steps": [
+                {
+                    "id": step.id,
+                    "name": step.name,
+                    "status": step.status,
+                    "started_at": step.started_at.isoformat() if step.started_at else None,
+                    "finished_at": step.finished_at.isoformat() if step.finished_at else None,
+                    "error": step.error,
+                }
+                for step in run_steps
+            ],
             "transcript": {
                 "format": settings.transcript_format_version,
                 "lines": transcript_lines,

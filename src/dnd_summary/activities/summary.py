@@ -23,6 +23,7 @@ from dnd_summary.llm_cache import (
 from dnd_summary.mappings import load_character_map
 from dnd_summary.models import Artifact, LLMCall, Quote, Run, SessionExtraction, Utterance
 from dnd_summary.render import render_summary_docx
+from dnd_summary.run_steps import run_step
 from dnd_summary.schema_genai import summary_plan_schema
 from dnd_summary.schemas import SessionFacts, SummaryPlan
 from dnd_summary.transcript_format import format_transcript
@@ -160,77 +161,106 @@ def _strip_unapproved_quotes(summary_text: str, quote_texts: list[str]) -> str:
 async def plan_summary_activity(payload: dict) -> dict:
     run_id = payload["run_id"]
     session_id = payload["session_id"]
+    with run_step(run_id, session_id, "summary_plan"):
 
-    with get_session() as session:
-        run = session.query(Run).filter_by(id=run_id).one()
-        extraction = (
-            session.query(SessionExtraction)
-            .filter_by(run_id=run_id, session_id=session_id, kind="session_facts")
-            .order_by(SessionExtraction.created_at.desc())
-            .first()
-        )
-        if not extraction:
-            raise ValueError("Missing session_facts extraction")
-        facts = SessionFacts.model_validate(extraction.payload)
-
-        utterances = (
-            session.query(Utterance)
-            .filter_by(session_id=session_id)
-            .order_by(Utterance.start_ms.asc(), Utterance.id.asc())
-            .all()
-        )
-        quotes = (
-            session.query(Quote)
-            .filter_by(session_id=session_id, run_id=run_id)
-            .all()
-        )
-
-        character_map = load_character_map(session, run.campaign_id)
-        transcript_text, _ = format_transcript(utterances, character_map)
-        transcript_stats = build_text_metrics("transcript", transcript_text)
-        base_usage = {
-            "utterance_count": len(utterances),
-            "character_count": len(character_map),
-            "quote_count": len(quotes),
-        }
-        try:
-            cache_name, transcript_block = ensure_transcript_cache(
-                session, run, transcript_text
+        with get_session() as session:
+            run = session.query(Run).filter_by(id=run_id).one()
+            extraction = (
+                session.query(SessionExtraction)
+                .filter_by(run_id=run_id, session_id=session_id, kind="session_facts")
+                .order_by(SessionExtraction.created_at.desc())
+                .first()
             )
-        except CacheRequiredError:
-            session.commit()
-            raise
-        quote_bank = _quote_bank(utterances, quotes)
-        quote_bank_stats = build_text_metrics("quote_bank", quote_bank)
-        facts_json = json.dumps(facts.model_dump(mode="json"))
-        facts_stats = build_text_metrics("session_facts", facts_json)
-        prompt = _load_prompt("summary_plan_v1.txt").format(
-            session_facts=facts_json,
-            quote_bank=quote_bank or "[none]",
-            character_map=json.dumps(character_map, sort_keys=True),
-            transcript_block=transcript_block,
-        )
-        prompt_stats = build_text_metrics("prompt", prompt)
-        usage_meta = {
-            **transcript_stats,
-            **quote_bank_stats,
-            **facts_stats,
-            **prompt_stats,
-            **base_usage,
-        }
+            if not extraction:
+                raise ValueError("Missing session_facts extraction")
+            facts = SessionFacts.model_validate(extraction.payload)
 
-        client = LLMClient()
-        start = time.monotonic()
-        try:
-            raw_json, usage = client.generate_json_schema(
-                prompt,
-                schema=summary_plan_schema(),
-                cached_content=cache_name,
-                return_usage=True,
+            utterances = (
+                session.query(Utterance)
+                .filter_by(session_id=session_id)
+                .order_by(Utterance.start_ms.asc(), Utterance.id.asc())
+                .all()
             )
-            latency_ms = int((time.monotonic() - start) * 1000)
-            cache_hit = cache_hit_from_usage(usage, cache_name)
-            if settings.require_transcript_cache and not cache_hit:
+            quotes = (
+                session.query(Quote)
+                .filter_by(session_id=session_id, run_id=run_id)
+                .all()
+            )
+
+            character_map = load_character_map(session, run.campaign_id)
+            transcript_text, _ = format_transcript(utterances, character_map)
+            transcript_stats = build_text_metrics("transcript", transcript_text)
+            base_usage = {
+                "utterance_count": len(utterances),
+                "character_count": len(character_map),
+                "quote_count": len(quotes),
+            }
+            try:
+                cache_name, transcript_block = ensure_transcript_cache(
+                    session, run, transcript_text
+                )
+            except CacheRequiredError:
+                session.commit()
+                raise
+            quote_bank = _quote_bank(utterances, quotes)
+            quote_bank_stats = build_text_metrics("quote_bank", quote_bank)
+            facts_json = json.dumps(facts.model_dump(mode="json"))
+            facts_stats = build_text_metrics("session_facts", facts_json)
+            prompt = _load_prompt("summary_plan_v1.txt").format(
+                session_facts=facts_json,
+                quote_bank=quote_bank or "[none]",
+                character_map=json.dumps(character_map, sort_keys=True),
+                transcript_block=transcript_block,
+            )
+            prompt_stats = build_text_metrics("prompt", prompt)
+            usage_meta = {
+                **transcript_stats,
+                **quote_bank_stats,
+                **facts_stats,
+                **prompt_stats,
+                **base_usage,
+            }
+
+            client = LLMClient()
+            start = time.monotonic()
+            try:
+                raw_json, usage = client.generate_json_schema(
+                    prompt,
+                    schema=summary_plan_schema(),
+                    cached_content=cache_name,
+                    return_usage=True,
+                )
+                latency_ms = int((time.monotonic() - start) * 1000)
+                cache_hit = cache_hit_from_usage(usage, cache_name)
+                if settings.require_transcript_cache and not cache_hit:
+                    session.add(
+                        LLMCall(
+                            run_id=run.id,
+                            session_id=session_id,
+                            kind="summary_plan",
+                            model=settings.gemini_model,
+                            prompt_id="summary_plan_v1",
+                            prompt_version="3",
+                            input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
+                            output_hash=sha256(b"").hexdigest(),
+                            latency_ms=latency_ms,
+                            status="error",
+                            error="Transcript cache miss for summary_plan.",
+                            created_at=datetime.utcnow(),
+                        )
+                    )
+                    record_llm_usage(
+                        session,
+                        run_id=run.id,
+                        session_id=session_id,
+                        prompt_id="summary_plan_v1",
+                        prompt_version="3",
+                        call_kind="summary_plan",
+                        usage=usage,
+                        cache_name=cache_name,
+                        metadata=usage_meta,
+                    )
+                    raise CacheRequiredError("Transcript cache miss for summary_plan.")
                 session.add(
                     LLMCall(
                         run_id=run.id,
@@ -240,10 +270,9 @@ async def plan_summary_activity(payload: dict) -> dict:
                         prompt_id="summary_plan_v1",
                         prompt_version="3",
                         input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
-                        output_hash=sha256(b"").hexdigest(),
+                        output_hash=sha256(raw_json.encode("utf-8")).hexdigest(),
                         latency_ms=latency_ms,
-                        status="error",
-                        error="Transcript cache miss for summary_plan.",
+                        status="success",
                         created_at=datetime.utcnow(),
                     )
                 )
@@ -258,172 +287,174 @@ async def plan_summary_activity(payload: dict) -> dict:
                     cache_name=cache_name,
                     metadata=usage_meta,
                 )
-                raise CacheRequiredError("Transcript cache miss for summary_plan.")
-            session.add(
-                LLMCall(
-                    run_id=run.id,
-                    session_id=session_id,
-                    kind="summary_plan",
-                    model=settings.gemini_model,
-                    prompt_id="summary_plan_v1",
-                    prompt_version="3",
-                    input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
-                    output_hash=sha256(raw_json.encode("utf-8")).hexdigest(),
-                    latency_ms=latency_ms,
-                    status="success",
-                    created_at=datetime.utcnow(),
+            except CacheRequiredError:
+                session.commit()
+                raise
+            except Exception as exc:
+                latency_ms = int((time.monotonic() - start) * 1000)
+                session.add(
+                    LLMCall(
+                        run_id=run.id,
+                        session_id=session_id,
+                        kind="summary_plan",
+                        model=settings.gemini_model,
+                        prompt_id="summary_plan_v1",
+                        prompt_version="3",
+                        input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
+                        output_hash=sha256(b"").hexdigest(),
+                        latency_ms=latency_ms,
+                        status="error",
+                        error=str(exc)[:2000],
+                        created_at=datetime.utcnow(),
+                    )
                 )
-            )
-            record_llm_usage(
-                session,
+                session.commit()
+                raise
+            plan_payload = json.loads(raw_json)
+            plan = SummaryPlan.model_validate(plan_payload)
+
+            plan_record = SessionExtraction(
                 run_id=run.id,
                 session_id=session_id,
+                kind="summary_plan",
+                model=settings.gemini_model,
                 prompt_id="summary_plan_v1",
                 prompt_version="3",
-                call_kind="summary_plan",
-                usage=usage,
-                cache_name=cache_name,
-                metadata=usage_meta,
+                payload=plan.model_dump(mode="json"),
+                created_at=datetime.utcnow(),
             )
-        except CacheRequiredError:
-            session.commit()
-            raise
-        except Exception as exc:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            session.add(
-                LLMCall(
-                    run_id=run.id,
-                    session_id=session_id,
-                    kind="summary_plan",
-                    model=settings.gemini_model,
-                    prompt_id="summary_plan_v1",
-                    prompt_version="3",
-                    input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
-                    output_hash=sha256(b"").hexdigest(),
-                    latency_ms=latency_ms,
-                    status="error",
-                    error=str(exc)[:2000],
-                    created_at=datetime.utcnow(),
-                )
-            )
-            session.commit()
-            raise
-        plan_payload = json.loads(raw_json)
-        plan = SummaryPlan.model_validate(plan_payload)
+            session.add(plan_record)
 
-        plan_record = SessionExtraction(
-            run_id=run.id,
-            session_id=session_id,
-            kind="summary_plan",
-            model=settings.gemini_model,
-            prompt_id="summary_plan_v1",
-            prompt_version="3",
-            payload=plan.model_dump(mode="json"),
-            created_at=datetime.utcnow(),
-        )
-        session.add(plan_record)
-
-    return {
-        "run_id": run_id,
-        "session_id": session_id,
-        "beats": len(plan.beats),
-    }
+        return {
+            "run_id": run_id,
+            "session_id": session_id,
+            "beats": len(plan.beats),
+        }
 
 
 @activity.defn
 async def write_summary_activity(payload: dict) -> dict:
     run_id = payload["run_id"]
     session_id = payload["session_id"]
+    with run_step(run_id, session_id, "summary_text"):
 
-    with get_session() as session:
-        run = session.query(Run).filter_by(id=run_id).one()
-        facts_record = (
-            session.query(SessionExtraction)
-            .filter_by(run_id=run_id, session_id=session_id, kind="session_facts")
-            .order_by(SessionExtraction.created_at.desc())
-            .first()
-        )
-        plan_record = (
-            session.query(SessionExtraction)
-            .filter_by(run_id=run_id, session_id=session_id, kind="summary_plan")
-            .order_by(SessionExtraction.created_at.desc())
-            .first()
-        )
-        if not facts_record or not plan_record:
-            raise ValueError("Missing session_facts or summary_plan extraction")
-
-        facts = SessionFacts.model_validate(facts_record.payload)
-        plan = SummaryPlan.model_validate(plan_record.payload)
-
-        utterances = (
-            session.query(Utterance)
-            .filter_by(session_id=session_id)
-            .order_by(Utterance.start_ms.asc(), Utterance.id.asc())
-            .all()
-        )
-        quotes = (
-            session.query(Quote)
-            .filter_by(session_id=session_id, run_id=run_id)
-            .all()
-        )
-        character_map = load_character_map(session, run.campaign_id)
-        transcript_text, _ = format_transcript(utterances, character_map)
-        transcript_stats = build_text_metrics("transcript", transcript_text)
-        base_usage = {
-            "utterance_count": len(utterances),
-            "character_count": len(character_map),
-            "quote_count": len(quotes),
-        }
-        try:
-            cache_name, transcript_block = ensure_transcript_cache(
-                session, run, transcript_text
+        with get_session() as session:
+            run = session.query(Run).filter_by(id=run_id).one()
+            facts_record = (
+                session.query(SessionExtraction)
+                .filter_by(run_id=run_id, session_id=session_id, kind="session_facts")
+                .order_by(SessionExtraction.created_at.desc())
+                .first()
             )
-        except CacheRequiredError:
-            session.commit()
-            raise
-
-        quote_ids: list[str] = []
-        for beat in plan.beats:
-            for qid in beat.quote_utterance_ids:
-                if qid not in quote_ids:
-                    quote_ids.append(qid)
-        quote_bank = _quote_bank(utterances, quotes, quote_ids)
-        quote_lookup = _build_quote_lookup(utterances, quotes, quote_ids)
-        quote_bank_stats = build_text_metrics("quote_bank", quote_bank)
-        facts_json = json.dumps(facts.model_dump(mode="json"))
-        plan_json = json.dumps(plan.model_dump(mode="json"))
-        facts_stats = build_text_metrics("session_facts", facts_json)
-        plan_stats = build_text_metrics("summary_plan", plan_json)
-        base_usage["quote_ids_count"] = len(quote_ids)
-
-        prompt = _load_prompt("write_summary_v1.txt").format(
-            summary_plan=plan_json,
-            session_facts=facts_json,
-            quote_bank=quote_bank or "[none]",
-            character_map=json.dumps(character_map, sort_keys=True),
-            transcript_block=transcript_block,
-        )
-        prompt_stats = build_text_metrics("prompt", prompt)
-        usage_meta = {
-            **transcript_stats,
-            **quote_bank_stats,
-            **facts_stats,
-            **plan_stats,
-            **prompt_stats,
-            **base_usage,
-        }
-
-        client = LLMClient()
-        start = time.monotonic()
-        try:
-            summary_text, usage = client.generate_text(
-                prompt,
-                cached_content=cache_name,
-                return_usage=True,
+            plan_record = (
+                session.query(SessionExtraction)
+                .filter_by(run_id=run_id, session_id=session_id, kind="summary_plan")
+                .order_by(SessionExtraction.created_at.desc())
+                .first()
             )
-            latency_ms = int((time.monotonic() - start) * 1000)
-            cache_hit = cache_hit_from_usage(usage, cache_name)
-            if settings.require_transcript_cache and not cache_hit:
+            if not facts_record or not plan_record:
+                raise ValueError("Missing session_facts or summary_plan extraction")
+
+            facts = SessionFacts.model_validate(facts_record.payload)
+            plan = SummaryPlan.model_validate(plan_record.payload)
+
+            utterances = (
+                session.query(Utterance)
+                .filter_by(session_id=session_id)
+                .order_by(Utterance.start_ms.asc(), Utterance.id.asc())
+                .all()
+            )
+            quotes = (
+                session.query(Quote)
+                .filter_by(session_id=session_id, run_id=run_id)
+                .all()
+            )
+            character_map = load_character_map(session, run.campaign_id)
+            transcript_text, _ = format_transcript(utterances, character_map)
+            transcript_stats = build_text_metrics("transcript", transcript_text)
+            base_usage = {
+                "utterance_count": len(utterances),
+                "character_count": len(character_map),
+                "quote_count": len(quotes),
+            }
+            try:
+                cache_name, transcript_block = ensure_transcript_cache(
+                    session, run, transcript_text
+                )
+            except CacheRequiredError:
+                session.commit()
+                raise
+
+            quote_ids: list[str] = []
+            for beat in plan.beats:
+                for qid in beat.quote_utterance_ids:
+                    if qid not in quote_ids:
+                        quote_ids.append(qid)
+            quote_bank = _quote_bank(utterances, quotes, quote_ids)
+            quote_lookup = _build_quote_lookup(utterances, quotes, quote_ids)
+            quote_bank_stats = build_text_metrics("quote_bank", quote_bank)
+            facts_json = json.dumps(facts.model_dump(mode="json"))
+            plan_json = json.dumps(plan.model_dump(mode="json"))
+            facts_stats = build_text_metrics("session_facts", facts_json)
+            plan_stats = build_text_metrics("summary_plan", plan_json)
+            base_usage["quote_ids_count"] = len(quote_ids)
+
+            prompt = _load_prompt("write_summary_v1.txt").format(
+                summary_plan=plan_json,
+                session_facts=facts_json,
+                quote_bank=quote_bank or "[none]",
+                character_map=json.dumps(character_map, sort_keys=True),
+                transcript_block=transcript_block,
+            )
+            prompt_stats = build_text_metrics("prompt", prompt)
+            usage_meta = {
+                **transcript_stats,
+                **quote_bank_stats,
+                **facts_stats,
+                **plan_stats,
+                **prompt_stats,
+                **base_usage,
+            }
+
+            client = LLMClient()
+            start = time.monotonic()
+            try:
+                summary_text, usage = client.generate_text(
+                    prompt,
+                    cached_content=cache_name,
+                    return_usage=True,
+                )
+                latency_ms = int((time.monotonic() - start) * 1000)
+                cache_hit = cache_hit_from_usage(usage, cache_name)
+                if settings.require_transcript_cache and not cache_hit:
+                    session.add(
+                        LLMCall(
+                            run_id=run.id,
+                            session_id=session_id,
+                            kind="summary_text",
+                            model=settings.gemini_model,
+                            prompt_id="write_summary_v1",
+                            prompt_version="3",
+                            input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
+                            output_hash=sha256(b"").hexdigest(),
+                            latency_ms=latency_ms,
+                            status="error",
+                            error="Transcript cache miss for summary_text.",
+                            created_at=datetime.utcnow(),
+                        )
+                    )
+                    record_llm_usage(
+                        session,
+                        run_id=run.id,
+                        session_id=session_id,
+                        prompt_id="write_summary_v1",
+                        prompt_version="3",
+                        call_kind="summary_text",
+                        usage=usage,
+                        cache_name=cache_name,
+                        metadata=usage_meta,
+                    )
+                    raise CacheRequiredError("Transcript cache miss for summary_text.")
                 session.add(
                     LLMCall(
                         run_id=run.id,
@@ -433,10 +464,9 @@ async def write_summary_activity(payload: dict) -> dict:
                         prompt_id="write_summary_v1",
                         prompt_version="3",
                         input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
-                        output_hash=sha256(b"").hexdigest(),
+                        output_hash=sha256(summary_text.encode("utf-8")).hexdigest(),
                         latency_ms=latency_ms,
-                        status="error",
-                        error="Transcript cache miss for summary_text.",
+                        status="success",
                         created_at=datetime.utcnow(),
                     )
                 )
@@ -451,124 +481,98 @@ async def write_summary_activity(payload: dict) -> dict:
                     cache_name=cache_name,
                     metadata=usage_meta,
                 )
-                raise CacheRequiredError("Transcript cache miss for summary_text.")
-            session.add(
-                LLMCall(
-                    run_id=run.id,
-                    session_id=session_id,
-                    kind="summary_text",
-                    model=settings.gemini_model,
-                    prompt_id="write_summary_v1",
-                    prompt_version="3",
-                    input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
-                    output_hash=sha256(summary_text.encode("utf-8")).hexdigest(),
-                    latency_ms=latency_ms,
-                    status="success",
-                    created_at=datetime.utcnow(),
+            except CacheRequiredError:
+                session.commit()
+                raise
+            except Exception as exc:
+                latency_ms = int((time.monotonic() - start) * 1000)
+                session.add(
+                    LLMCall(
+                        run_id=run.id,
+                        session_id=session_id,
+                        kind="summary_text",
+                        model=settings.gemini_model,
+                        prompt_id="write_summary_v1",
+                        prompt_version="3",
+                        input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
+                        output_hash=sha256(b"").hexdigest(),
+                        latency_ms=latency_ms,
+                        status="error",
+                        error=str(exc)[:2000],
+                        created_at=datetime.utcnow(),
+                    )
                 )
-            )
-            record_llm_usage(
-                session,
+                session.commit()
+                raise
+            try:
+                _validate_summary_quotes(summary_text, list(quote_lookup.values()))
+            except ValueError:
+                summary_text = _strip_unapproved_quotes(
+                    summary_text,
+                    list(quote_lookup.values()),
+                )
+                _validate_summary_quotes(summary_text, list(quote_lookup.values()))
+
+            summary_record = SessionExtraction(
                 run_id=run.id,
                 session_id=session_id,
+                kind="summary_text",
+                model=settings.gemini_model,
                 prompt_id="write_summary_v1",
                 prompt_version="3",
-                call_kind="summary_text",
-                usage=usage,
-                cache_name=cache_name,
-                metadata=usage_meta,
+                payload={"text": summary_text},
+                created_at=datetime.utcnow(),
             )
-        except CacheRequiredError:
-            session.commit()
-            raise
-        except Exception as exc:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            session.add(
-                LLMCall(
-                    run_id=run.id,
-                    session_id=session_id,
-                    kind="summary_text",
-                    model=settings.gemini_model,
-                    prompt_id="write_summary_v1",
-                    prompt_version="3",
-                    input_hash=sha256(prompt.encode("utf-8")).hexdigest(),
-                    output_hash=sha256(b"").hexdigest(),
-                    latency_ms=latency_ms,
-                    status="error",
-                    error=str(exc)[:2000],
-                    created_at=datetime.utcnow(),
-                )
-            )
-            session.commit()
-            raise
-        try:
-            _validate_summary_quotes(summary_text, list(quote_lookup.values()))
-        except ValueError:
-            summary_text = _strip_unapproved_quotes(
-                summary_text,
-                list(quote_lookup.values()),
-            )
-            _validate_summary_quotes(summary_text, list(quote_lookup.values()))
+            session.add(summary_record)
 
-        summary_record = SessionExtraction(
-            run_id=run.id,
-            session_id=session_id,
-            kind="summary_text",
-            model=settings.gemini_model,
-            prompt_id="write_summary_v1",
-            prompt_version="3",
-            payload={"text": summary_text},
-            created_at=datetime.utcnow(),
-        )
-        session.add(summary_record)
-
-    return {"run_id": run_id, "session_id": session_id, "chars": len(summary_text)}
+        return {"run_id": run_id, "session_id": session_id, "chars": len(summary_text)}
 
 
 @activity.defn
 async def render_summary_docx_activity(payload: dict) -> dict:
     run_id = payload["run_id"]
     session_id = payload["session_id"]
+    with run_step(run_id, session_id, "render_summary_docx"):
 
-    with get_session() as session:
-        summary_record = (
-            session.query(SessionExtraction)
-            .filter_by(run_id=run_id, session_id=session_id, kind="summary_text")
-            .order_by(SessionExtraction.created_at.desc())
-            .first()
-        )
-        if not summary_record:
-            raise ValueError("Missing summary_text extraction")
-        summary_text = summary_record.payload["text"]
+        with get_session() as session:
+            summary_record = (
+                session.query(SessionExtraction)
+                .filter_by(run_id=run_id, session_id=session_id, kind="summary_text")
+                .order_by(SessionExtraction.created_at.desc())
+                .first()
+            )
+            if not summary_record:
+                raise ValueError("Missing summary_text extraction")
+            summary_text = summary_record.payload["text"]
 
-        output_dir = Path(settings.artifacts_root) / session_id
-        output_dir.mkdir(parents=True, exist_ok=True)
-        txt_path = output_dir / "summary.txt"
-        txt_path.write_text(summary_text, encoding="utf-8")
-        output_path = output_dir / "summary.docx"
-        render_summary_docx(summary_text, output_path)
+            output_dir = Path(settings.artifacts_root) / session_id
+            output_dir.mkdir(parents=True, exist_ok=True)
+            txt_path = output_dir / "summary.txt"
+            txt_path.write_text(summary_text, encoding="utf-8")
+            output_path = output_dir / "summary.docx"
+            render_summary_docx(summary_text, output_path)
 
-        artifact = Artifact(
-            run_id=run_id,
-            session_id=session_id,
-            kind="summary_docx",
-            path=str(output_path),
-            meta={"bytes": output_path.stat().st_size},
-            created_at=datetime.utcnow(),
-        )
-        txt_artifact = Artifact(
-            run_id=run_id,
-            session_id=session_id,
-            kind="summary_txt",
-            path=str(txt_path),
-            meta={"bytes": txt_path.stat().st_size},
-            created_at=datetime.utcnow(),
-        )
-        session.add_all([artifact, txt_artifact])
+            artifact = Artifact(
+                run_id=run_id,
+                session_id=session_id,
+                kind="summary_docx",
+                path=str(output_path),
+                meta={"bytes": output_path.stat().st_size},
+                created_at=datetime.utcnow(),
+            )
+            txt_artifact = Artifact(
+                run_id=run_id,
+                session_id=session_id,
+                kind="summary_txt",
+                path=str(txt_path),
+                meta={"bytes": txt_path.stat().st_size},
+                created_at=datetime.utcnow(),
+            )
+            session.add_all([artifact, txt_artifact])
 
-    return {
-        "run_id": run_id,
-        "session_id": session_id,
-        "path": str(output_path),
-        "text_path": str(txt_path),
-    }
+        return {
+            "run_id": run_id,
+            "session_id": session_id,
+            "path": str(output_path),
+            "text_path": str(txt_path),
+        }
