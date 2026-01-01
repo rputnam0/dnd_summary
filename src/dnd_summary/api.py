@@ -32,6 +32,7 @@ from dnd_summary.models import (
     Scene,
     Session,
     SessionExtraction,
+    SpoilerTag,
     Thread,
     ThreadUpdate,
     EntityMention,
@@ -215,6 +216,48 @@ def _session_for_id(session, session_id: str, request: Request) -> Session:
         raise HTTPException(status_code=404, detail="Session not found")
     _require_campaign_access(session, session_obj.campaign_id, request)
     return session_obj
+
+
+def _campaign_role(session, campaign_id: str, request: Request) -> str:
+    if not settings.auth_enabled:
+        return "dm"
+    user_id = _auth_user_id(request)
+    membership = (
+        session.query(CampaignMembership)
+        .filter_by(campaign_id=campaign_id, user_id=user_id)
+        .first()
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Missing campaign access")
+    return membership.role
+
+
+def _spoiler_cutoff(
+    session,
+    campaign_id: str,
+    request: Request,
+    session_id: str | None = None,
+) -> int | None:
+    role = _campaign_role(session, campaign_id, request)
+    if role == "dm":
+        return None
+    if session_id:
+        session_obj = session.query(Session).filter_by(id=session_id).first()
+        if session_obj and session_obj.session_number:
+            return session_obj.session_number
+    latest_number = (
+        session.query(Session.session_number)
+        .filter(Session.campaign_id == campaign_id, Session.session_number.is_not(None))
+        .order_by(Session.session_number.desc())
+        .limit(1)
+        .scalar()
+    )
+    return latest_number
+
+
+def _spoiler_map(session, campaign_id: str) -> dict[tuple[str, str], int]:
+    tags = session.query(SpoilerTag).filter_by(campaign_id=campaign_id).all()
+    return {(tag.target_type, tag.target_id): tag.reveal_session_number for tag in tags}
 
 
 @app.get("/", include_in_schema=False)
@@ -485,6 +528,57 @@ def list_bookmarks(
         ]
 
 
+@app.post("/spoilers")
+def create_spoiler(payload: dict, request: Request) -> dict:
+    campaign_slug = payload.get("campaign_slug")
+    target_type = payload.get("target_type")
+    target_id = payload.get("target_id")
+    reveal_session_number = payload.get("reveal_session_number")
+    if not campaign_slug or not target_type or not target_id or reveal_session_number is None:
+        raise HTTPException(status_code=400, detail="Missing spoiler fields")
+    if target_type not in {"entity", "thread", "event"}:
+        raise HTTPException(status_code=400, detail="Unsupported spoiler target type")
+    _validate_slug(campaign_slug, "campaign")
+    with get_session() as session:
+        campaign = _campaign_for_slug(session, campaign_slug, request)
+        _require_dm(session, campaign.id, request)
+        created_by = _auth_user_id(request) if settings.auth_enabled else None
+        existing = (
+            session.query(SpoilerTag)
+            .filter_by(
+                campaign_id=campaign.id,
+                target_type=target_type,
+                target_id=target_id,
+            )
+            .first()
+        )
+        if existing:
+            existing.reveal_session_number = int(reveal_session_number)
+            existing.created_by = created_by
+            session.flush()
+            return {
+                "id": existing.id,
+                "target_type": existing.target_type,
+                "target_id": existing.target_id,
+                "reveal_session_number": existing.reveal_session_number,
+            }
+        tag = SpoilerTag(
+            campaign_id=campaign.id,
+            target_type=target_type,
+            target_id=target_id,
+            reveal_session_number=int(reveal_session_number),
+            created_by=created_by,
+        )
+        session.add(tag)
+        session.flush()
+        return {
+            "id": tag.id,
+            "target_type": tag.target_type,
+            "target_id": tag.target_id,
+            "reveal_session_number": tag.reveal_session_number,
+        }
+
+
 @app.get("/campaigns/{campaign_slug}/me")
 def get_campaign_membership(campaign_slug: str, request: Request) -> dict:
     _validate_slug(campaign_slug, "campaign")
@@ -546,12 +640,18 @@ def list_sessions(campaign_slug: str, request: Request) -> list[dict]:
 
 
 @app.get("/campaigns/{campaign_slug}/entities")
-def list_entities(campaign_slug: str, request: Request) -> list[dict]:
+def list_entities(
+    campaign_slug: str,
+    request: Request,
+    session_id: Annotated[str | None, Query()] = None,
+) -> list[dict]:
     _validate_slug(campaign_slug, "campaign")
     with get_session() as session:
         campaign = _campaign_for_slug(session, campaign_slug, request)
         corrections = _load_corrections(session, campaign.id, None, "entity")
         hidden_ids, merge_map, rename_map = _entity_correction_maps(corrections)
+        spoiler_cutoff = _spoiler_cutoff(session, campaign.id, request, session_id)
+        spoiler_map = _spoiler_map(session, campaign.id)
         entities = (
             session.query(Entity)
             .filter_by(campaign_id=campaign.id)
@@ -567,6 +667,10 @@ def list_entities(campaign_slug: str, request: Request) -> list[dict]:
             }
             for e in entities
             if e.id not in hidden_ids and e.id not in merge_map
+            and (
+                spoiler_cutoff is None
+                or spoiler_map.get(("entity", e.id), 0) <= spoiler_cutoff
+            )
         ]
 
 
@@ -871,6 +975,8 @@ def list_session_entities(
         session_obj = _session_for_id(session, session_id, request)
         corrections = _load_corrections(session, session_obj.campaign_id, session_id, "entity")
         hidden_ids, merge_map, rename_map = _entity_correction_maps(corrections)
+        spoiler_cutoff = _spoiler_cutoff(session, session_obj.campaign_id, request, session_id)
+        spoiler_map = _spoiler_map(session, session_obj.campaign_id)
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
         entities = (
             session.query(Entity)
@@ -889,6 +995,10 @@ def list_session_entities(
             }
             for e in entities
             if e.id not in hidden_ids and e.id not in merge_map
+            and (
+                spoiler_cutoff is None
+                or spoiler_map.get(("entity", e.id), 0) <= spoiler_cutoff
+            )
         ]
 
 
@@ -1039,6 +1149,8 @@ def search_campaign(
         hidden_threads, merge_threads, title_map, status_map, summary_map = _thread_correction_maps(
             thread_corrections
         )
+        spoiler_cutoff = _spoiler_cutoff(session, campaign.id, request, session_id)
+        spoiler_map = _spoiler_map(session, campaign.id)
         quote_corrections = _load_corrections(session, campaign.id, session_id, "quote")
         utterance_corrections = _load_corrections(
             session,
@@ -1321,6 +1433,8 @@ def semantic_search_campaign(
                 "score": _score_terms(e.summary, terms),
             }
             for e in events_raw
+            if spoiler_cutoff is None
+            or spoiler_map.get(("event", e.id), 0) <= spoiler_cutoff
         ]
         scenes = [
             {
@@ -1349,6 +1463,10 @@ def semantic_search_campaign(
             }
             for t in threads_raw
             if t.id not in hidden_threads and t.id not in merge_threads
+            and (
+                spoiler_cutoff is None
+                or spoiler_map.get(("thread", t.id), 0) <= spoiler_cutoff
+            )
         ]
         updates = [
             {
@@ -1445,7 +1563,9 @@ def list_events(
     run_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
     with get_session() as session:
-        _session_for_id(session, session_id, request)
+        session_obj = _session_for_id(session, session_id, request)
+        spoiler_cutoff = _spoiler_cutoff(session, session_obj.campaign_id, request, session_id)
+        spoiler_map = _spoiler_map(session, session_obj.campaign_id)
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
         events = (
             session.query(Event)
@@ -1465,6 +1585,8 @@ def list_events(
                 "confidence": e.confidence,
             }
             for e in events
+            if spoiler_cutoff is None
+            or spoiler_map.get(("event", e.id), 0) <= spoiler_cutoff
         ]
 
 
@@ -2257,6 +2379,7 @@ def list_campaign_threads(
     request: Request,
     status: Annotated[str | None, Query()] = None,
     include_all_runs: Annotated[bool, Query()] = False,
+    session_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
     with get_session() as session:
         campaign = _campaign_for_slug(session, campaign_slug, request)
@@ -2264,6 +2387,8 @@ def list_campaign_threads(
         hidden_ids, merge_map, title_map, status_map, summary_map = _thread_correction_maps(
             corrections
         )
+        spoiler_cutoff = _spoiler_cutoff(session, campaign.id, request, session_id)
+        spoiler_map = _spoiler_map(session, campaign.id)
 
         run_ids = None
         if not include_all_runs:
@@ -2298,6 +2423,11 @@ def list_campaign_threads(
             thread_title = title_map.get(thread.id, thread.title)
             thread_status = status_map.get(thread.id, thread.status)
             thread_summary = summary_map.get(thread.id, thread.summary)
+            if (
+                spoiler_cutoff is not None
+                and spoiler_map.get(("thread", thread.id), 0) > spoiler_cutoff
+            ):
+                continue
             if status and thread_status != status:
                 continue
             key = thread.campaign_thread_id or " ".join((thread_title or "").lower().split())
@@ -2470,6 +2600,8 @@ def get_session_bundle(
             .distinct()
             .all()
         )
+        spoiler_cutoff = _spoiler_cutoff(session, session_obj.campaign_id, request, session_id)
+        spoiler_map = _spoiler_map(session, session_obj.campaign_id)
 
         return {
             "session_id": session_id,
@@ -2558,6 +2690,8 @@ def get_session_bundle(
                     "confidence": e.confidence,
                 }
                 for e in events
+                if spoiler_cutoff is None
+                or spoiler_map.get(("event", e.id), 0) <= spoiler_cutoff
             ],
             "threads": [
                 {
@@ -2574,6 +2708,10 @@ def get_session_bundle(
                 }
                 for t in threads
                 if t.id not in hidden_threads and t.id not in merge_threads
+                and (
+                    spoiler_cutoff is None
+                    or spoiler_map.get(("thread", t.id), 0) <= spoiler_cutoff
+                )
             ],
             "entities": [
                 {
@@ -2584,6 +2722,10 @@ def get_session_bundle(
                 }
                 for e in entities
                 if e.id not in hidden_entities and e.id not in merge_entities
+                and (
+                    spoiler_cutoff is None
+                    or spoiler_map.get(("entity", e.id), 0) <= spoiler_cutoff
+                )
             ],
         }
 

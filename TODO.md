@@ -149,7 +149,7 @@ the repo in a working state.
    - Notes on sessions/entities/threads; bookmark quotes and events.
    - Acceptance: players can build their own “memory layer” without polluting canonical lore.
 
-25) Commit: Spoiler controls
+25) Commit: Spoiler controls (done)
    - Per-session “spoiler until session N” tagging for threads/entities/events; filter per player.
    - Acceptance: campaign stays playable for late-joining players.
 

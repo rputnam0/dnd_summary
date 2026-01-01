@@ -450,6 +450,7 @@ function renderEvents(events) {
     return;
   }
   const canBookmark = !state.authEnabled || state.currentUserId;
+  const canEdit = !state.authEnabled || state.userRole === "dm";
   events.forEach((event) => {
     const card = document.createElement("div");
     card.className = "event-card";
@@ -492,6 +493,15 @@ function renderEvents(events) {
         saveBookmark("event", event.id)
       );
       card.appendChild(bookmarkButton);
+    }
+    if (canEdit) {
+      const spoilerButton = document.createElement("button");
+      spoilerButton.type = "button";
+      spoilerButton.textContent = "Spoiler";
+      spoilerButton.addEventListener("click", () =>
+        applySpoiler("event", event.id)
+      );
+      card.appendChild(spoilerButton);
     }
     elements.eventList.appendChild(card);
   });
@@ -1005,7 +1015,14 @@ function renderBookmarks(bookmarks) {
 async function loadQuestJournal() {
   if (!state.selectedCampaign) return;
   const status = elements.questFilter.value;
-  const query = status && status !== "all" ? `?status=${status}` : "";
+  const params = new URLSearchParams();
+  if (status && status !== "all") {
+    params.set("status", status);
+  }
+  if (state.selectedSession) {
+    params.set("session_id", state.selectedSession);
+  }
+  const query = params.toString() ? `?${params.toString()}` : "";
   try {
     const threads = await fetchJson(`/campaigns/${state.selectedCampaign}/threads${query}`);
     state.questThreads = threads;
@@ -1020,7 +1037,12 @@ async function loadQuestJournal() {
 async function loadCodex() {
   if (!state.selectedCampaign) return;
   try {
-    const entities = await fetchJson(`/campaigns/${state.selectedCampaign}/entities`);
+    const params = new URLSearchParams();
+    if (state.selectedSession) {
+      params.set("session_id", state.selectedSession);
+    }
+    const query = params.toString() ? `?${params.toString()}` : "";
+    const entities = await fetchJson(`/campaigns/${state.selectedCampaign}/entities${query}`);
     state.campaignEntities = entities;
     renderCodex(entities);
   } catch (err) {
@@ -1044,6 +1066,8 @@ async function loadSession(sessionId) {
   const runs = await fetchJson(`/sessions/${sessionId}/runs`);
   const activeRun = populateRunSelect(runs);
   state.selectedRun = activeRun;
+  await loadQuestJournal();
+  await loadCodex();
   await loadBundle(sessionId, activeRun);
 }
 
@@ -1350,6 +1374,24 @@ function buildEntityEditor(detail) {
   hideRow.append(hideLabel, hideButton);
   wrapper.appendChild(hideRow);
 
+  const spoilerRow = document.createElement("div");
+  spoilerRow.className = "editor-row";
+  const spoilerLabel = document.createElement("label");
+  spoilerLabel.textContent = "Spoiler";
+  const spoilerInput = document.createElement("input");
+  spoilerInput.type = "number";
+  spoilerInput.min = "1";
+  spoilerInput.placeholder = "Reveal session #";
+  const spoilerButton = document.createElement("button");
+  spoilerButton.textContent = "Set";
+  spoilerButton.addEventListener("click", async () => {
+    const number = Number.parseInt(spoilerInput.value, 10);
+    if (!Number.isFinite(number)) return;
+    await applySpoiler("entity", detail.id, number);
+  });
+  spoilerRow.append(spoilerLabel, spoilerInput, spoilerButton);
+  wrapper.appendChild(spoilerRow);
+
   return wrapper;
 }
 
@@ -1447,6 +1489,36 @@ async function applyRedaction(targetType, targetId, label) {
   } catch (err) {
     console.error(err);
     setStatus("Failed to save redaction.");
+  }
+}
+
+async function applySpoiler(targetType, targetId, revealNumber) {
+  if (!state.selectedCampaign) return;
+  let number = revealNumber;
+  if (!number) {
+    const value = prompt("Hide until session number (e.g. 5)");
+    if (!value) return;
+    number = Number.parseInt(value, 10);
+  }
+  if (!Number.isFinite(number) || number < 1) {
+    setStatus("Invalid session number.");
+    return;
+  }
+  setStatus("Saving spoiler tag...");
+  try {
+    await postJson("/spoilers", {
+      campaign_slug: state.selectedCampaign,
+      target_type: targetType,
+      target_id: targetId,
+      reveal_session_number: number,
+    });
+    setStatus("Spoiler tag saved.");
+    await loadBundle(state.selectedSession, state.selectedRun);
+    await loadQuestJournal();
+    await loadCodex();
+  } catch (err) {
+    console.error(err);
+    setStatus("Failed to save spoiler tag.");
   }
 }
 
@@ -1553,6 +1625,24 @@ function buildThreadEditor(thread) {
   });
   mergeRow.append(mergeLabel, mergeInput, mergeButton);
   wrapper.appendChild(mergeRow);
+
+  const spoilerRow = document.createElement("div");
+  spoilerRow.className = "editor-row";
+  const spoilerLabel = document.createElement("label");
+  spoilerLabel.textContent = "Spoiler";
+  const spoilerInput = document.createElement("input");
+  spoilerInput.type = "number";
+  spoilerInput.min = "1";
+  spoilerInput.placeholder = "Reveal session #";
+  const spoilerButton = document.createElement("button");
+  spoilerButton.textContent = "Set";
+  spoilerButton.addEventListener("click", async () => {
+    const number = Number.parseInt(spoilerInput.value, 10);
+    if (!Number.isFinite(number)) return;
+    await applySpoiler("thread", thread.id, number);
+  });
+  spoilerRow.append(spoilerLabel, spoilerInput, spoilerButton);
+  wrapper.appendChild(spoilerRow);
 
   return wrapper;
 }

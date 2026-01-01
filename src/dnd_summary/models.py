@@ -99,6 +99,27 @@ class Bookmark(Base):
     )
 
 
+class SpoilerTag(Base):
+    __tablename__ = "spoiler_tags"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False)
+    target_type: Mapped[str] = mapped_column(String, nullable=False)
+    target_id: Mapped[str] = mapped_column(String, nullable=False)
+    reveal_session_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "campaign_id",
+            "target_type",
+            "target_id",
+            name="uq_spoiler_target",
+        ),
+    )
+
+
 class Session(Base):
     __tablename__ = "sessions"
 
