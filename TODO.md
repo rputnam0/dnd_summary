@@ -135,7 +135,7 @@ the repo in a working state.
    - Acceptance: the UI can be player-facing without leaking private table talk.
 
 ### Phase 5: Auth + roles (DM vs player)
-22) Commit: Add users + campaign memberships (dm/player) and session auth
+22) Commit: Add users + campaign memberships (dm/player) and session auth (done)
    - Minimal local auth: passwordless invite links or simple JWT with per-campaign membership.
    - Acceptance: DM-only routes are protected; players can read allowed views.
 

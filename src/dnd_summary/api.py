@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_
@@ -20,6 +20,7 @@ from dnd_summary.mappings import load_character_map
 from dnd_summary.models import (
     Artifact,
     Campaign,
+    CampaignMembership,
     Correction,
     Entity,
     EntityAlias,
@@ -36,6 +37,7 @@ from dnd_summary.models import (
     Mention,
     LLMCall,
     Utterance,
+    User,
 )
 from dnd_summary.schema_genai import semantic_search_schema
 from dnd_summary.transcript_format import format_transcript
@@ -156,6 +158,63 @@ def _redacted_ids(corrections: list[Correction]) -> set[str]:
     return redacted
 
 
+def _auth_user_id(request: Request) -> str | None:
+    if not settings.auth_enabled:
+        return None
+    user_id = request.headers.get("X-User-Id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Missing X-User-Id header")
+    return user_id
+
+
+def _require_campaign_role(
+    session,
+    campaign_id: str,
+    user_id: str,
+    role: str | None = None,
+) -> CampaignMembership:
+    membership = (
+        session.query(CampaignMembership)
+        .filter_by(campaign_id=campaign_id, user_id=user_id)
+        .first()
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Missing campaign access")
+    if role and membership.role != role:
+        raise HTTPException(status_code=403, detail="Insufficient campaign role")
+    return membership
+
+
+def _require_dm(session, campaign_id: str, request: Request) -> None:
+    user_id = _auth_user_id(request)
+    if not user_id:
+        return
+    _require_campaign_role(session, campaign_id, user_id, "dm")
+
+
+def _require_campaign_access(session, campaign_id: str, request: Request) -> None:
+    user_id = _auth_user_id(request)
+    if not user_id:
+        return
+    _require_campaign_role(session, campaign_id, user_id)
+
+
+def _campaign_for_slug(session, campaign_slug: str, request: Request) -> Campaign:
+    campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    _require_campaign_access(session, campaign.id, request)
+    return campaign
+
+
+def _session_for_id(session, session_id: str, request: Request) -> Session:
+    session_obj = session.query(Session).filter_by(id=session_id).first()
+    if not session_obj:
+        raise HTTPException(status_code=404, detail="Session not found")
+    _require_campaign_access(session, session_obj.campaign_id, request)
+    return session_obj
+
+
 @app.get("/", include_in_schema=False)
 def ui_index() -> HTMLResponse:
     if UI_ROOT.exists():
@@ -169,11 +228,15 @@ def health() -> dict:
 
 
 @app.get("/artifacts/{artifact_id}")
-def get_artifact(artifact_id: str) -> FileResponse:
+def get_artifact(artifact_id: str, request: Request) -> FileResponse:
     with get_session() as session:
         artifact = session.query(Artifact).filter_by(id=artifact_id).first()
         if not artifact:
             raise HTTPException(status_code=404, detail="Artifact not found")
+        session_obj = session.query(Session).filter_by(id=artifact.session_id).first()
+        if not session_obj:
+            raise HTTPException(status_code=404, detail="Session not found")
+        _require_campaign_access(session, session_obj.campaign_id, request)
         base = Path(settings.artifacts_root).resolve()
         artifact_path = Path(artifact.path)
         if not artifact_path.is_absolute():
@@ -187,19 +250,93 @@ def get_artifact(artifact_id: str) -> FileResponse:
 
 
 @app.get("/campaigns")
-def list_campaigns() -> list[dict]:
+def list_campaigns(request: Request) -> list[dict]:
     with get_session() as session:
-        campaigns = session.query(Campaign).order_by(Campaign.slug.asc()).all()
+        user_id = _auth_user_id(request)
+        if user_id:
+            campaigns = (
+                session.query(Campaign)
+                .join(CampaignMembership, CampaignMembership.campaign_id == Campaign.id)
+                .filter(CampaignMembership.user_id == user_id)
+                .order_by(Campaign.slug.asc())
+                .all()
+            )
+        else:
+            campaigns = session.query(Campaign).order_by(Campaign.slug.asc()).all()
         return [{"id": c.id, "slug": c.slug, "name": c.name} for c in campaigns]
 
 
-@app.get("/campaigns/{campaign_slug}/sessions")
-def list_sessions(campaign_slug: str) -> list[dict]:
+@app.post("/users")
+def create_user(payload: dict) -> dict:
+    display_name = (payload.get("display_name") or "").strip()
+    if not display_name:
+        raise HTTPException(status_code=400, detail="Missing display_name")
+    with get_session() as session:
+        user = User(display_name=display_name)
+        session.add(user)
+        session.flush()
+        return {"id": user.id, "display_name": user.display_name}
+
+
+@app.post("/campaigns/{campaign_slug}/memberships")
+def create_membership(campaign_slug: str, payload: dict, request: Request) -> dict:
+    user_id = payload.get("user_id")
+    role = payload.get("role", "player")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing user_id")
+    if role not in {"dm", "player"}:
+        raise HTTPException(status_code=400, detail="Invalid role")
     _validate_slug(campaign_slug, "campaign")
     with get_session() as session:
         campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
         if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
+        user = session.query(User).filter_by(id=user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        if settings.auth_enabled:
+            requester_id = _auth_user_id(request)
+            existing = (
+                session.query(CampaignMembership)
+                .filter_by(campaign_id=campaign.id)
+                .first()
+            )
+            if existing:
+                if not requester_id:
+                    raise HTTPException(status_code=401, detail="Missing X-User-Id header")
+                _require_campaign_role(session, campaign.id, requester_id, "dm")
+        existing_membership = (
+            session.query(CampaignMembership)
+            .filter_by(campaign_id=campaign.id, user_id=user_id)
+            .first()
+        )
+        if existing_membership:
+            return {
+                "id": existing_membership.id,
+                "campaign_id": existing_membership.campaign_id,
+                "user_id": existing_membership.user_id,
+                "role": existing_membership.role,
+            }
+        membership = CampaignMembership(
+            campaign_id=campaign.id,
+            user_id=user_id,
+            role=role,
+        )
+        session.add(membership)
+        session.flush()
+        return {
+            "id": membership.id,
+            "campaign_id": membership.campaign_id,
+            "user_id": membership.user_id,
+            "role": membership.role,
+        }
+
+
+@app.get("/campaigns/{campaign_slug}/sessions")
+def list_sessions(campaign_slug: str, request: Request) -> list[dict]:
+    _validate_slug(campaign_slug, "campaign")
+    with get_session() as session:
+        campaign = _campaign_for_slug(session, campaign_slug, request)
         sessions = (
             session.query(Session)
             .filter_by(campaign_id=campaign.id)
@@ -232,12 +369,10 @@ def list_sessions(campaign_slug: str) -> list[dict]:
 
 
 @app.get("/campaigns/{campaign_slug}/entities")
-def list_entities(campaign_slug: str) -> list[dict]:
+def list_entities(campaign_slug: str, request: Request) -> list[dict]:
     _validate_slug(campaign_slug, "campaign")
     with get_session() as session:
-        campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
-        if not campaign:
-            raise HTTPException(status_code=404, detail="Campaign not found")
+        campaign = _campaign_for_slug(session, campaign_slug, request)
         corrections = _load_corrections(session, campaign.id, None, "entity")
         hidden_ids, merge_map, rename_map = _entity_correction_maps(corrections)
         entities = (
@@ -262,6 +397,7 @@ def list_entities(campaign_slug: str) -> list[dict]:
 async def upload_transcript(
     campaign_slug: str,
     session_slug: str,
+    request: Request,
     file: UploadFile = File(...),
 ) -> dict:
     _validate_slug(campaign_slug, "campaign")
@@ -283,14 +419,20 @@ async def upload_transcript(
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty transcript")
+    with get_session() as session:
+        campaign = _campaign_for_slug(session, campaign_slug, request)
+        _require_dm(session, campaign.id, request)
     dest_path.write_bytes(content)
     return {"path": str(dest_path), "bytes": len(content)}
 
 
 @app.post("/campaigns/{campaign_slug}/sessions/{session_slug}/runs")
-async def start_session_run(campaign_slug: str, session_slug: str) -> dict:
+async def start_session_run(campaign_slug: str, session_slug: str, request: Request) -> dict:
     _validate_slug(campaign_slug, "campaign")
     _validate_slug(session_slug, "session")
+    with get_session() as session:
+        campaign = _campaign_for_slug(session, campaign_slug, request)
+        _require_dm(session, campaign.id, request)
     from temporalio.client import Client
 
     client = await Client.connect(
@@ -307,11 +449,12 @@ async def start_session_run(campaign_slug: str, session_slug: str) -> dict:
 
 
 @app.get("/entities/{entity_id}")
-def get_entity(entity_id: str) -> dict:
+def get_entity(entity_id: str, request: Request) -> dict:
     with get_session() as session:
         entity = session.query(Entity).filter_by(id=entity_id).first()
         if not entity:
             raise HTTPException(status_code=404, detail="Entity not found")
+        _require_campaign_access(session, entity.campaign_id, request)
         corrections = _load_corrections(session, entity.campaign_id, None, "entity")
         hidden_ids, merge_map, rename_map = _entity_correction_maps(corrections)
         if entity.id in hidden_ids or entity.id in merge_map:
@@ -335,7 +478,7 @@ def get_entity(entity_id: str) -> dict:
 
 
 @app.post("/entities/{entity_id}/corrections")
-def create_entity_correction(entity_id: str, payload: dict) -> dict:
+def create_entity_correction(entity_id: str, payload: dict, request: Request) -> dict:
     action = payload.get("action")
     correction_payload = payload.get("payload") or {}
     session_id = payload.get("session_id")
@@ -362,6 +505,7 @@ def create_entity_correction(entity_id: str, payload: dict) -> dict:
         entity = session.query(Entity).filter_by(id=entity_id).first()
         if not entity:
             raise HTTPException(status_code=404, detail="Entity not found")
+        _require_dm(session, entity.campaign_id, request)
         if session_id:
             session_obj = session.query(Session).filter_by(id=session_id).first()
             if not session_obj:
@@ -389,6 +533,7 @@ def create_entity_correction(entity_id: str, payload: dict) -> dict:
 @app.get("/entities/{entity_id}/mentions")
 def list_entity_mentions(
     entity_id: str,
+    request: Request,
     session_id: Annotated[str | None, Query()] = None,
     run_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
@@ -396,6 +541,7 @@ def list_entity_mentions(
         entity = session.query(Entity).filter_by(id=entity_id).first()
         if not entity:
             raise HTTPException(status_code=404, detail="Entity not found")
+        _require_campaign_access(session, entity.campaign_id, request)
         corrections = _load_corrections(session, entity.campaign_id, None, "entity")
         hidden_ids, merge_map, _ = _entity_correction_maps(corrections)
         if entity.id in hidden_ids or entity.id in merge_map:
@@ -428,6 +574,7 @@ def list_entity_mentions(
 @app.get("/entities/{entity_id}/events")
 def list_entity_events(
     entity_id: str,
+    request: Request,
     session_id: Annotated[str | None, Query()] = None,
     run_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
@@ -435,6 +582,7 @@ def list_entity_events(
         entity = session.query(Entity).filter_by(id=entity_id).first()
         if not entity:
             raise HTTPException(status_code=404, detail="Entity not found")
+        _require_campaign_access(session, entity.campaign_id, request)
         corrections = _load_corrections(session, entity.campaign_id, None, "entity")
         hidden_ids, merge_map, _ = _entity_correction_maps(corrections)
         if entity.id in hidden_ids or entity.id in merge_map:
@@ -470,6 +618,7 @@ def list_entity_events(
 @app.get("/entities/{entity_id}/quotes")
 def list_entity_quotes(
     entity_id: str,
+    request: Request,
     session_id: Annotated[str | None, Query()] = None,
     run_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
@@ -477,6 +626,7 @@ def list_entity_quotes(
         entity = session.query(Entity).filter_by(id=entity_id).first()
         if not entity:
             raise HTTPException(status_code=404, detail="Entity not found")
+        _require_campaign_access(session, entity.campaign_id, request)
         corrections = _load_corrections(session, entity.campaign_id, None, "entity")
         hidden_ids, merge_map, _ = _entity_correction_maps(corrections)
         if entity.id in hidden_ids or entity.id in merge_map:
@@ -537,12 +687,11 @@ def list_entity_quotes(
 @app.get("/sessions/{session_id}/entities")
 def list_session_entities(
     session_id: str,
+    request: Request,
     run_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
     with get_session() as session:
-        session_obj = session.query(Session).filter_by(id=session_id).first()
-        if not session_obj:
-            raise HTTPException(status_code=404, detail="Session not found")
+        session_obj = _session_for_id(session, session_id, request)
         corrections = _load_corrections(session, session_obj.campaign_id, session_id, "entity")
         hidden_ids, merge_map, rename_map = _entity_correction_maps(corrections)
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
@@ -569,12 +718,11 @@ def list_session_entities(
 @app.get("/sessions/{session_id}/mentions")
 def list_mentions(
     session_id: str,
+    request: Request,
     run_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
     with get_session() as session:
-        session_obj = session.query(Session).filter_by(id=session_id).first()
-        if not session_obj:
-            raise HTTPException(status_code=404, detail="Session not found")
+        session_obj = _session_for_id(session, session_id, request)
         corrections = _load_corrections(session, session_obj.campaign_id, session_id, "entity")
         hidden_ids, merge_map, rename_map = _entity_correction_maps(corrections)
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
@@ -615,12 +763,11 @@ def list_mentions(
 @app.get("/sessions/{session_id}/quotes")
 def list_quotes(
     session_id: str,
+    request: Request,
     run_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
     with get_session() as session:
-        session_obj = session.query(Session).filter_by(id=session_id).first()
-        if not session_obj:
-            raise HTTPException(status_code=404, detail="Session not found")
+        session_obj = _session_for_id(session, session_id, request)
         quote_corrections = _load_corrections(session, session_obj.campaign_id, session_id, "quote")
         utterance_corrections = _load_corrections(
             session,
@@ -654,7 +801,7 @@ def list_quotes(
 
 
 @app.post("/redactions")
-def create_redaction(payload: dict) -> dict:
+def create_redaction(payload: dict, request: Request) -> dict:
     target_type = payload.get("target_type")
     target_id = payload.get("target_id")
     reason = payload.get("reason")
@@ -682,6 +829,7 @@ def create_redaction(payload: dict) -> dict:
                 raise HTTPException(status_code=404, detail="Session not found")
             campaign_id = session_obj.campaign_id
             session_id = quote.session_id
+        _require_dm(session, campaign_id, request)
         correction = Correction(
             campaign_id=campaign_id,
             session_id=session_id,
@@ -699,14 +847,13 @@ def create_redaction(payload: dict) -> dict:
 @app.get("/campaigns/{campaign_slug}/search")
 def search_campaign(
     campaign_slug: str,
+    request: Request,
     q: str = Query(..., min_length=2),
     include_all_runs: Annotated[bool, Query()] = False,
     session_id: Annotated[str | None, Query()] = None,
 ) -> dict:
     with get_session() as session:
-        campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
-        if not campaign:
-            raise HTTPException(status_code=404, detail="Campaign not found")
+        campaign = _campaign_for_slug(session, campaign_slug, request)
 
         run_ids = None
         if not include_all_runs:
@@ -833,14 +980,13 @@ def search_campaign(
 @app.get("/campaigns/{campaign_slug}/semantic_search")
 def semantic_search_campaign(
     campaign_slug: str,
+    request: Request,
     q: str = Query(..., min_length=2),
     include_all_runs: Annotated[bool, Query()] = False,
     session_id: Annotated[str | None, Query()] = None,
 ) -> dict:
     with get_session() as session:
-        campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
-        if not campaign:
-            raise HTTPException(status_code=404, detail="Campaign not found")
+        campaign = _campaign_for_slug(session, campaign_slug, request)
 
         run_ids = None
         if not include_all_runs:
@@ -1088,9 +1234,11 @@ def semantic_search_campaign(
 @app.get("/sessions/{session_id}/scenes")
 def list_scenes(
     session_id: str,
+    request: Request,
     run_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
     with get_session() as session:
+        _session_for_id(session, session_id, request)
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
         scenes = (
             session.query(Scene)
@@ -1116,9 +1264,11 @@ def list_scenes(
 @app.get("/sessions/{session_id}/events")
 def list_events(
     session_id: str,
+    request: Request,
     run_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
     with get_session() as session:
+        _session_for_id(session, session_id, request)
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
         events = (
             session.query(Event)
@@ -1144,12 +1294,11 @@ def list_events(
 @app.get("/sessions/{session_id}/threads")
 def list_threads(
     session_id: str,
+    request: Request,
     run_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
     with get_session() as session:
-        session_obj = session.query(Session).filter_by(id=session_id).first()
-        if not session_obj:
-            raise HTTPException(status_code=404, detail="Session not found")
+        session_obj = _session_for_id(session, session_id, request)
         corrections = _load_corrections(session, session_obj.campaign_id, session_id, "thread")
         hidden_ids, merge_map, title_map, status_map, summary_map = _thread_correction_maps(
             corrections
@@ -1198,7 +1347,7 @@ def list_threads(
 
 
 @app.post("/threads/{thread_id}/corrections")
-def create_thread_correction(thread_id: str, payload: dict) -> dict:
+def create_thread_correction(thread_id: str, payload: dict, request: Request) -> dict:
     action = payload.get("action")
     correction_payload = payload.get("payload") or {}
     session_id = payload.get("session_id")
@@ -1226,6 +1375,7 @@ def create_thread_correction(thread_id: str, payload: dict) -> dict:
         run = session.query(Run).filter_by(id=thread.run_id).first()
         if not run:
             raise HTTPException(status_code=404, detail="Run not found")
+        _require_dm(session, run.campaign_id, request)
         if session_id:
             session_obj = session.query(Session).filter_by(id=session_id).first()
             if not session_obj:
@@ -1427,7 +1577,7 @@ def _name_matches(candidate: str, names: set[str]) -> bool:
 
 
 @app.get("/threads/{thread_id}/mentions")
-def list_thread_mentions(thread_id: str) -> list[dict]:
+def list_thread_mentions(thread_id: str, request: Request) -> list[dict]:
     with get_session() as session:
         thread = session.query(Thread).filter_by(id=thread_id).first()
         if not thread:
@@ -1435,6 +1585,7 @@ def list_thread_mentions(thread_id: str) -> list[dict]:
         run = session.query(Run).filter_by(id=thread.run_id).first()
         if not run:
             raise HTTPException(status_code=404, detail="Run not found")
+        _require_campaign_access(session, run.campaign_id, request)
         corrections = _load_corrections(session, run.campaign_id, thread.session_id, "thread")
         hidden_ids, merge_map, title_map, _, _ = _thread_correction_maps(corrections)
         if thread.id in hidden_ids or thread.id in merge_map:
@@ -1493,7 +1644,7 @@ def list_thread_mentions(thread_id: str) -> list[dict]:
 
 
 @app.get("/threads/{thread_id}/quotes")
-def list_thread_quotes(thread_id: str) -> list[dict]:
+def list_thread_quotes(thread_id: str, request: Request) -> list[dict]:
     with get_session() as session:
         thread = session.query(Thread).filter_by(id=thread_id).first()
         if not thread:
@@ -1501,6 +1652,7 @@ def list_thread_quotes(thread_id: str) -> list[dict]:
         run = session.query(Run).filter_by(id=thread.run_id).first()
         if not run:
             raise HTTPException(status_code=404, detail="Run not found")
+        _require_campaign_access(session, run.campaign_id, request)
         corrections = _load_corrections(session, run.campaign_id, thread.session_id, "thread")
         hidden_ids, merge_map, title_map, _, _ = _thread_correction_maps(corrections)
         if thread.id in hidden_ids or thread.id in merge_map:
@@ -1595,9 +1747,11 @@ def list_thread_quotes(thread_id: str) -> list[dict]:
 @app.get("/sessions/{session_id}/artifacts")
 def list_artifacts(
     session_id: str,
+    request: Request,
     run_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
     with get_session() as session:
+        _session_for_id(session, session_id, request)
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
         artifacts = (
             session.query(Artifact)
@@ -1618,9 +1772,11 @@ def list_artifacts(
 @app.get("/sessions/{session_id}/summary")
 def get_summary(
     session_id: str,
+    request: Request,
     run_id: Annotated[str | None, Query()] = None,
 ) -> dict:
     with get_session() as session:
+        _session_for_id(session, session_id, request)
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
         summary = (
             session.query(SessionExtraction)
@@ -1664,11 +1820,12 @@ def get_summary(
 
 
 @app.get("/sessions/{session_id}/export")
-def export_session(session_id: str) -> FileResponse:
+def export_session(session_id: str, request: Request) -> FileResponse:
     with get_session() as session:
         session_obj = session.query(Session).filter_by(id=session_id).first()
         if not session_obj:
             raise HTTPException(status_code=404, detail="Session not found")
+        _require_dm(session, session_obj.campaign_id, request)
         artifacts = (
             session.query(Artifact)
             .filter_by(session_id=session_id)
@@ -1717,8 +1874,9 @@ def export_session(session_id: str) -> FileResponse:
 
 
 @app.get("/sessions/{session_id}/runs")
-def list_runs(session_id: str) -> list[dict]:
+def list_runs(session_id: str, request: Request) -> list[dict]:
     with get_session() as session:
+        _session_for_id(session, session_id, request)
         runs = (
             session.query(Run)
             .filter_by(session_id=session_id)
@@ -1740,9 +1898,11 @@ def list_runs(session_id: str) -> list[dict]:
 @app.get("/sessions/{session_id}/run-status")
 def get_run_status(
     session_id: str,
+    request: Request,
     run_id: Annotated[str | None, Query()] = None,
 ) -> dict:
     with get_session() as session:
+        _session_for_id(session, session_id, request)
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
         run = session.query(Run).filter_by(id=resolved_run_id, session_id=session_id).first()
         if not run:
@@ -1804,7 +1964,7 @@ def get_run_status(
 
 
 @app.put("/sessions/{session_id}/current-run")
-def set_current_run(session_id: str, run_id: str) -> dict:
+def set_current_run(session_id: str, run_id: str, request: Request) -> dict:
     with get_session() as session:
         run = session.query(Run).filter_by(id=run_id, session_id=session_id).first()
         if not run:
@@ -1812,16 +1972,18 @@ def set_current_run(session_id: str, run_id: str) -> dict:
         session_obj = session.query(Session).filter_by(id=session_id).first()
         if not session_obj:
             raise HTTPException(status_code=404, detail="Session not found")
+        _require_dm(session, session_obj.campaign_id, request)
         session_obj.current_run_id = run.id
         return {"session_id": session_id, "current_run_id": run.id}
 
 
 @app.delete("/sessions/{session_id}")
-def delete_session(session_id: str) -> dict:
+def delete_session(session_id: str, request: Request) -> dict:
     with get_session() as session:
         session_obj = session.query(Session).filter_by(id=session_id).first()
         if not session_obj:
             raise HTTPException(status_code=404, detail="Session not found")
+        _require_dm(session, session_obj.campaign_id, request)
         run_ids = [run.id for run in session.query(Run).filter_by(session_id=session_id).all()]
         session.query(Artifact).filter_by(session_id=session_id).delete()
         session.query(SessionExtraction).filter_by(session_id=session_id).delete()
@@ -1842,6 +2004,7 @@ def delete_session(session_id: str) -> dict:
 
 @app.get("/utterances")
 def list_utterances(
+    request: Request,
     ids: Annotated[list[str] | None, Query()] = None,
     session_id: Annotated[str | None, Query()] = None,
 ) -> list[dict]:
@@ -1861,6 +2024,7 @@ def list_utterances(
             session_obj = session.query(Session).filter_by(id=utter_session_id).first()
             if not session_obj:
                 continue
+            _require_campaign_access(session, session_obj.campaign_id, request)
             corrections = _load_corrections(
                 session,
                 session_obj.campaign_id,
@@ -1883,7 +2047,7 @@ def list_utterances(
 
 
 @app.get("/utterances/{utterance_id}")
-def get_utterance(utterance_id: str) -> dict:
+def get_utterance(utterance_id: str, request: Request) -> dict:
     with get_session() as session:
         utterance = session.query(Utterance).filter_by(id=utterance_id).first()
         if not utterance:
@@ -1891,6 +2055,7 @@ def get_utterance(utterance_id: str) -> dict:
         session_obj = session.query(Session).filter_by(id=utterance.session_id).first()
         if not session_obj:
             raise HTTPException(status_code=404, detail="Session not found")
+        _require_campaign_access(session, session_obj.campaign_id, request)
         corrections = _load_corrections(
             session,
             session_obj.campaign_id,
@@ -1912,13 +2077,12 @@ def get_utterance(utterance_id: str) -> dict:
 @app.get("/campaigns/{campaign_slug}/threads")
 def list_campaign_threads(
     campaign_slug: str,
+    request: Request,
     status: Annotated[str | None, Query()] = None,
     include_all_runs: Annotated[bool, Query()] = False,
 ) -> list[dict]:
     with get_session() as session:
-        campaign = session.query(Campaign).filter_by(slug=campaign_slug).first()
-        if not campaign:
-            raise HTTPException(status_code=404, detail="Campaign not found")
+        campaign = _campaign_for_slug(session, campaign_slug, request)
         corrections = _load_corrections(session, campaign.id, None, "thread")
         hidden_ids, merge_map, title_map, status_map, summary_map = _thread_correction_maps(
             corrections
@@ -1998,14 +2162,13 @@ def list_campaign_threads(
 @app.get("/sessions/{session_id}/bundle")
 def get_session_bundle(
     session_id: str,
+    request: Request,
     run_id: Annotated[str | None, Query()] = None,
 ) -> dict:
     with get_session() as session:
         resolved_run_id = _resolve_run_id(session, session_id, run_id)
         run = session.query(Run).filter_by(id=resolved_run_id).first()
-        session_obj = session.query(Session).filter_by(id=session_id).first()
-        if not session_obj:
-            raise HTTPException(status_code=404, detail="Session not found")
+        session_obj = _session_for_id(session, session_id, request)
         entity_corrections = _load_corrections(session, session_obj.campaign_id, session_id, "entity")
         thread_corrections = _load_corrections(session, session_obj.campaign_id, session_id, "thread")
         quote_corrections = _load_corrections(session, session_obj.campaign_id, session_id, "quote")

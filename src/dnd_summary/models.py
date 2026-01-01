@@ -34,6 +34,34 @@ class Campaign(Base):
     participants = relationship("Participant", back_populates="campaign")
     campaign_threads = relationship("CampaignThread", back_populates="campaign")
     corrections = relationship("Correction", back_populates="campaign")
+    memberships = relationship("CampaignMembership", back_populates="campaign")
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    display_name: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    memberships = relationship("CampaignMembership", back_populates="user")
+
+
+class CampaignMembership(Base):
+    __tablename__ = "campaign_memberships"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False, default="player")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    campaign = relationship("Campaign", back_populates="memberships")
+    user = relationship("User", back_populates="memberships")
+
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "user_id", name="uq_campaign_membership"),
+    )
 
 
 class Session(Base):

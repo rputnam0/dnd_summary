@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     llm_output_cost_per_million: float = 3.00
     llm_cached_cost_per_million: float = 0.05
     llm_cache_storage_cost_per_million_hour: float = 1.00
+    auth_enabled: bool = False
 
 
 settings = Settings()
