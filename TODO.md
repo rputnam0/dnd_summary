@@ -105,7 +105,7 @@ the repo in a working state.
    - New tables: `event_entities`, `scene_entities`, `thread_entities` (with role + evidence).
    - Acceptance: “show me everything about Baba Yaga” no longer depends on string matching.
 
-15) Commit: Backfill entity links from existing runs
+15) Commit: Backfill entity links from existing runs (done)
    - Migration script that links by mention evidence + alias matching.
    - Acceptance: existing data becomes richer without re-running old sessions.
 
