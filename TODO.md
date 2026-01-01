@@ -145,7 +145,7 @@ the repo in a working state.
    - Acceptance: same campaign can be safely shared.
 
 ### Phase 6: Player experience improvements (high retention)
-24) Commit: Player notes + bookmarks
+24) Commit: Player notes + bookmarks (done)
    - Notes on sessions/entities/threads; bookmark quotes and events.
    - Acceptance: players can build their own “memory layer” without polluting canonical lore.
 

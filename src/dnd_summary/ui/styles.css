@@ -157,6 +157,65 @@ input[type="search"] {
   font-size: 0.75rem;
 }
 
+.note-controls {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+  font-family: "Source Sans 3", sans-serif;
+}
+
+.note-controls textarea {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(207, 174, 88, 0.3);
+  background: rgba(6, 8, 10, 0.9);
+  color: var(--ink);
+  font-family: "Source Sans 3", sans-serif;
+}
+
+.note-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.note-list {
+  display: grid;
+  gap: 12px;
+}
+
+.note-card {
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(207, 174, 88, 0.2);
+  background: rgba(9, 11, 14, 0.65);
+}
+
+.note-card p {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+}
+
+.note-card small {
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+}
+
+.note-composer {
+  margin-top: 16px;
+  display: grid;
+  gap: 8px;
+}
+
+.note-composer textarea {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(207, 174, 88, 0.3);
+  background: rgba(6, 8, 10, 0.9);
+  color: var(--ink);
+  font-family: "Source Sans 3", sans-serif;
+}
+
 button {
   border: none;
   border-radius: 12px;

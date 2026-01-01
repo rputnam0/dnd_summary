@@ -22,6 +22,7 @@ from dnd_summary.models import (
     Campaign,
     CampaignMembership,
     Correction,
+    Bookmark,
     Entity,
     EntityAlias,
     Event,
@@ -36,6 +37,7 @@ from dnd_summary.models import (
     EntityMention,
     Mention,
     LLMCall,
+    Note,
     Utterance,
     User,
 )
@@ -330,6 +332,157 @@ def create_membership(campaign_slug: str, payload: dict, request: Request) -> di
             "user_id": membership.user_id,
             "role": membership.role,
         }
+
+
+@app.post("/notes")
+def create_note(payload: dict, request: Request) -> dict:
+    campaign_slug = payload.get("campaign_slug")
+    session_id = payload.get("session_id")
+    target_type = payload.get("target_type")
+    target_id = payload.get("target_id")
+    body = (payload.get("body") or "").strip()
+    if not campaign_slug or not target_type or not target_id or not body:
+        raise HTTPException(status_code=400, detail="Missing note fields")
+    _validate_slug(campaign_slug, "campaign")
+    with get_session() as session:
+        campaign = _campaign_for_slug(session, campaign_slug, request)
+        if session_id:
+            session_obj = session.query(Session).filter_by(id=session_id).first()
+            if not session_obj:
+                raise HTTPException(status_code=404, detail="Session not found")
+            if session_obj.campaign_id != campaign.id:
+                raise HTTPException(status_code=400, detail="Session does not match campaign")
+        created_by = _auth_user_id(request) if settings.auth_enabled else None
+        note = Note(
+            campaign_id=campaign.id,
+            session_id=session_id,
+            target_type=target_type,
+            target_id=target_id,
+            body=body,
+            created_by=created_by,
+        )
+        session.add(note)
+        session.flush()
+        return {
+            "id": note.id,
+            "target_type": note.target_type,
+            "target_id": note.target_id,
+            "body": note.body,
+            "created_at": note.created_at.isoformat(),
+        }
+
+
+@app.get("/notes")
+def list_notes(
+    campaign_slug: str,
+    request: Request,
+    session_id: Annotated[str | None, Query()] = None,
+    target_type: Annotated[str | None, Query()] = None,
+    target_id: Annotated[str | None, Query()] = None,
+) -> list[dict]:
+    _validate_slug(campaign_slug, "campaign")
+    with get_session() as session:
+        campaign = _campaign_for_slug(session, campaign_slug, request)
+        query = session.query(Note).filter(Note.campaign_id == campaign.id)
+        if session_id:
+            query = query.filter(Note.session_id == session_id)
+        if target_type:
+            query = query.filter(Note.target_type == target_type)
+        if target_id:
+            query = query.filter(Note.target_id == target_id)
+        notes = query.order_by(Note.created_at.desc(), Note.id.desc()).all()
+        return [
+            {
+                "id": note.id,
+                "session_id": note.session_id,
+                "target_type": note.target_type,
+                "target_id": note.target_id,
+                "body": note.body,
+                "created_by": note.created_by,
+                "created_at": note.created_at.isoformat(),
+            }
+            for note in notes
+        ]
+
+
+@app.post("/bookmarks")
+def create_bookmark(payload: dict, request: Request) -> dict:
+    campaign_slug = payload.get("campaign_slug")
+    session_id = payload.get("session_id")
+    target_type = payload.get("target_type")
+    target_id = payload.get("target_id")
+    if not campaign_slug or not target_type or not target_id:
+        raise HTTPException(status_code=400, detail="Missing bookmark fields")
+    if target_type not in {"event", "quote"}:
+        raise HTTPException(status_code=400, detail="Unsupported bookmark target type")
+    _validate_slug(campaign_slug, "campaign")
+    with get_session() as session:
+        campaign = _campaign_for_slug(session, campaign_slug, request)
+        if session_id:
+            session_obj = session.query(Session).filter_by(id=session_id).first()
+            if not session_obj:
+                raise HTTPException(status_code=404, detail="Session not found")
+            if session_obj.campaign_id != campaign.id:
+                raise HTTPException(status_code=400, detail="Session does not match campaign")
+        created_by = _auth_user_id(request) if settings.auth_enabled else None
+        existing = (
+            session.query(Bookmark)
+            .filter_by(
+                campaign_id=campaign.id,
+                target_type=target_type,
+                target_id=target_id,
+                created_by=created_by,
+            )
+            .first()
+        )
+        if existing:
+            return {
+                "id": existing.id,
+                "target_type": existing.target_type,
+                "target_id": existing.target_id,
+                "created_at": existing.created_at.isoformat(),
+            }
+        bookmark = Bookmark(
+            campaign_id=campaign.id,
+            session_id=session_id,
+            target_type=target_type,
+            target_id=target_id,
+            created_by=created_by,
+        )
+        session.add(bookmark)
+        session.flush()
+        return {
+            "id": bookmark.id,
+            "target_type": bookmark.target_type,
+            "target_id": bookmark.target_id,
+            "created_at": bookmark.created_at.isoformat(),
+        }
+
+
+@app.get("/bookmarks")
+def list_bookmarks(
+    campaign_slug: str,
+    request: Request,
+    session_id: Annotated[str | None, Query()] = None,
+) -> list[dict]:
+    _validate_slug(campaign_slug, "campaign")
+    with get_session() as session:
+        campaign = _campaign_for_slug(session, campaign_slug, request)
+        query = session.query(Bookmark).filter(Bookmark.campaign_id == campaign.id)
+        if session_id:
+            query = query.filter(Bookmark.session_id == session_id)
+        bookmarks = query.order_by(Bookmark.created_at.desc(), Bookmark.id.desc()).all()
+        return [
+            {
+                "id": bookmark.id,
+                "session_id": bookmark.session_id,
+                "target_type": bookmark.target_type,
+                "target_id": bookmark.target_id,
+                "created_by": bookmark.created_by,
+                "created_at": bookmark.created_at.isoformat(),
+            }
+            for bookmark in bookmarks
+        ]
 
 
 @app.get("/campaigns/{campaign_slug}/me")

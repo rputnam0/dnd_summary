@@ -37,6 +37,10 @@ const elements = {
   sceneList: document.getElementById("sceneList"),
   eventList: document.getElementById("eventList"),
   quoteList: document.getElementById("quoteList"),
+  sessionNote: document.getElementById("sessionNote"),
+  saveSessionNote: document.getElementById("saveSessionNote"),
+  noteList: document.getElementById("noteList"),
+  bookmarkList: document.getElementById("bookmarkList"),
   transcriptText: document.getElementById("transcriptText"),
   entityList: document.getElementById("entityList"),
   entityFilter: document.getElementById("entityFilter"),
@@ -445,6 +449,7 @@ function renderEvents(events) {
     elements.eventList.textContent = "No events captured.";
     return;
   }
+  const canBookmark = !state.authEnabled || state.currentUserId;
   events.forEach((event) => {
     const card = document.createElement("div");
     card.className = "event-card";
@@ -479,6 +484,15 @@ function renderEvents(events) {
       );
       card.appendChild(button);
     }
+    if (canBookmark) {
+      const bookmarkButton = document.createElement("button");
+      bookmarkButton.type = "button";
+      bookmarkButton.textContent = "Bookmark";
+      bookmarkButton.addEventListener("click", () =>
+        saveBookmark("event", event.id)
+      );
+      card.appendChild(bookmarkButton);
+    }
     elements.eventList.appendChild(card);
   });
 }
@@ -490,6 +504,7 @@ function renderQuotes(quotes) {
     return;
   }
   const canEdit = !state.authEnabled || state.userRole === "dm";
+  const canBookmark = !state.authEnabled || state.currentUserId;
   quotes.forEach((quote) => {
     const card = document.createElement("div");
     card.className = "quote-card";
@@ -517,6 +532,15 @@ function renderQuotes(quotes) {
       openEvidence(`Quote: ${quote.speaker || "Unknown"}`, evidence)
     );
     card.appendChild(button);
+    if (canBookmark) {
+      const bookmarkButton = document.createElement("button");
+      bookmarkButton.type = "button";
+      bookmarkButton.textContent = "Bookmark";
+      bookmarkButton.addEventListener("click", () =>
+        saveBookmark("quote", quote.id)
+      );
+      card.appendChild(bookmarkButton);
+    }
     if (canEdit) {
       const redactButton = document.createElement("button");
       redactButton.type = "button";
@@ -890,6 +914,94 @@ async function loadSessions() {
   setStatus("Select a session to begin.");
 }
 
+async function loadNotesAndBookmarks() {
+  if (!state.selectedCampaign || !state.selectedSession) {
+    return;
+  }
+  try {
+    const noteQuery = new URLSearchParams({
+      campaign_slug: state.selectedCampaign,
+      session_id: state.selectedSession,
+    });
+    const bookmarkQuery = new URLSearchParams({
+      campaign_slug: state.selectedCampaign,
+      session_id: state.selectedSession,
+    });
+    const [notes, bookmarks] = await Promise.all([
+      fetchJson(`/notes?${noteQuery.toString()}`),
+      fetchJson(`/bookmarks?${bookmarkQuery.toString()}`),
+    ]);
+    renderNotes(notes);
+    renderBookmarks(bookmarks);
+  } catch (err) {
+    if (elements.noteList) {
+      elements.noteList.textContent = "Failed to load notes.";
+    }
+    if (elements.bookmarkList) {
+      elements.bookmarkList.textContent = "Failed to load bookmarks.";
+    }
+    console.error(err);
+  }
+}
+
+function renderNotes(notes) {
+  if (!elements.noteList) return;
+  clearNode(elements.noteList);
+  if (!notes || notes.length === 0) {
+    elements.noteList.textContent = "No notes yet.";
+    return;
+  }
+  notes.forEach((note) => {
+    const card = document.createElement("div");
+    card.className = "note-card";
+    const body = document.createElement("p");
+    body.textContent = note.body;
+    const meta = document.createElement("small");
+    const created = note.created_at ? new Date(note.created_at).toLocaleString() : "";
+    meta.textContent = created;
+    card.appendChild(body);
+    card.appendChild(meta);
+    elements.noteList.appendChild(card);
+  });
+}
+
+function renderBookmarks(bookmarks) {
+  if (!elements.bookmarkList) return;
+  clearNode(elements.bookmarkList);
+  if (!bookmarks || bookmarks.length === 0) {
+    elements.bookmarkList.textContent = "No bookmarks yet.";
+    return;
+  }
+  const quoteLookup = new Map((state.bundle?.quotes || []).map((q) => [q.id, q]));
+  const eventLookup = new Map((state.bundle?.events || []).map((e) => [e.id, e]));
+  bookmarks.forEach((bookmark) => {
+    const card = document.createElement("div");
+    card.className = "note-card";
+    let text = `${bookmark.target_type} ${bookmark.target_id}`;
+    if (bookmark.target_type === "quote") {
+      const quote = quoteLookup.get(bookmark.target_id);
+      if (quote) {
+        text = quote.display_text || quote.clean_text || text;
+      }
+    } else if (bookmark.target_type === "event") {
+      const event = eventLookup.get(bookmark.target_id);
+      if (event) {
+        text = event.summary || event.event_type || text;
+      }
+    }
+    const body = document.createElement("p");
+    body.textContent = text;
+    const meta = document.createElement("small");
+    const created = bookmark.created_at
+      ? new Date(bookmark.created_at).toLocaleString()
+      : "";
+    meta.textContent = created;
+    card.appendChild(body);
+    card.appendChild(meta);
+    elements.bookmarkList.appendChild(card);
+  });
+}
+
 async function loadQuestJournal() {
   if (!state.selectedCampaign) return;
   const status = elements.questFilter.value;
@@ -1052,6 +1164,7 @@ async function loadBundle(sessionId, runId) {
   const bundle = await fetchJson(`/sessions/${sessionId}/bundle${query}`);
   state.bundle = bundle;
   renderBundle(bundle);
+  await loadNotesAndBookmarks();
   const runShort = bundle.run_id ? bundle.run_id.slice(0, 8) : "unknown";
   setStatus(`Session loaded. Run ${runShort}.`);
 }
@@ -1240,6 +1353,45 @@ function buildEntityEditor(detail) {
   return wrapper;
 }
 
+function buildNoteComposer(targetType, targetId, label) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "note-composer";
+  const heading = document.createElement("h4");
+  heading.textContent = label || "Notes";
+  const textarea = document.createElement("textarea");
+  textarea.rows = 3;
+  textarea.placeholder = "Add a note...";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "Save note";
+  button.addEventListener("click", async () => {
+    const body = textarea.value.trim();
+    if (!body || !state.selectedCampaign) return;
+    setStatus("Saving note...");
+    try {
+      await postJson("/notes", {
+        campaign_slug: state.selectedCampaign,
+        session_id: state.selectedSession,
+        target_type: targetType,
+        target_id: targetId,
+        body,
+      });
+      textarea.value = "";
+      setStatus("Note saved.");
+      if (targetType === "session") {
+        await loadNotesAndBookmarks();
+      }
+    } catch (err) {
+      console.error(err);
+      setStatus("Failed to save note.");
+    }
+  });
+  wrapper.appendChild(heading);
+  wrapper.appendChild(textarea);
+  wrapper.appendChild(button);
+  return wrapper;
+}
+
 async function refreshAfterThreadCorrection(threadId) {
   await loadQuestJournal();
   if (state.selectedSession && state.selectedRun) {
@@ -1295,6 +1447,26 @@ async function applyRedaction(targetType, targetId, label) {
   } catch (err) {
     console.error(err);
     setStatus("Failed to save redaction.");
+  }
+}
+
+async function saveBookmark(targetType, targetId) {
+  if (!state.selectedCampaign || !state.selectedSession) {
+    return;
+  }
+  setStatus("Saving bookmark...");
+  try {
+    await postJson("/bookmarks", {
+      campaign_slug: state.selectedCampaign,
+      session_id: state.selectedSession,
+      target_type: targetType,
+      target_id: targetId,
+    });
+    setStatus("Bookmark saved.");
+    await loadNotesAndBookmarks();
+  } catch (err) {
+    console.error(err);
+    setStatus("Failed to save bookmark.");
   }
 }
 
@@ -1448,6 +1620,9 @@ async function openEntity(entity) {
     } else {
       blocks.forEach((block) => elements.entityDetails.appendChild(block));
     }
+    elements.entityDetails.appendChild(
+      buildNoteComposer("entity", detail.id, "Entity notes")
+    );
   } catch (err) {
     elements.entityDetails.appendChild(
       renderSearchItem("Failed to load entity dossier.", null)
@@ -1463,6 +1638,9 @@ function openThread(thread) {
   clearNode(elements.threadDetails);
   elements.threadPanel.classList.remove("hidden");
   elements.threadDetails.appendChild(buildThreadEditor(thread));
+  elements.threadDetails.appendChild(
+    buildNoteComposer("thread", thread.id, "Quest notes")
+  );
 }
 
 function closeEntityPanel() {
@@ -1703,6 +1881,31 @@ async function init() {
   elements.questFilter.addEventListener("change", async () => {
     await loadQuestJournal();
   });
+  if (elements.saveSessionNote && elements.sessionNote) {
+    elements.saveSessionNote.addEventListener("click", async () => {
+      if (!state.selectedCampaign || !state.selectedSession) {
+        return;
+      }
+      const body = elements.sessionNote.value.trim();
+      if (!body) return;
+      setStatus("Saving note...");
+      try {
+        await postJson("/notes", {
+          campaign_slug: state.selectedCampaign,
+          session_id: state.selectedSession,
+          target_type: "session",
+          target_id: state.selectedSession,
+          body,
+        });
+        elements.sessionNote.value = "";
+        setStatus("Note saved.");
+        await loadNotesAndBookmarks();
+      } catch (err) {
+        console.error(err);
+        setStatus("Failed to save note.");
+      }
+    });
+  }
   elements.runSelect.addEventListener("change", async (event) => {
     const runId = event.target.value;
     state.selectedRun = runId;
