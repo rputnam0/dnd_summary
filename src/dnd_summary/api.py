@@ -1310,6 +1310,19 @@ def list_runs(session_id: str) -> list[dict]:
         ]
 
 
+@app.put("/sessions/{session_id}/current-run")
+def set_current_run(session_id: str, run_id: str) -> dict:
+    with get_session() as session:
+        run = session.query(Run).filter_by(id=run_id, session_id=session_id).first()
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found for session")
+        session_obj = session.query(Session).filter_by(id=session_id).first()
+        if not session_obj:
+            raise HTTPException(status_code=404, detail="Session not found")
+        session_obj.current_run_id = run.id
+        return {"session_id": session_id, "current_run_id": run.id}
+
+
 @app.get("/utterances")
 def list_utterances(
     ids: Annotated[list[str] | None, Query()] = None,

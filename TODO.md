@@ -88,7 +88,7 @@ the repo in a working state.
    - `POST /campaigns/{campaign}/sessions/{session}/runs` starts Temporal workflow (or local mode).
    - Acceptance: UI can start processing and receive `run_id`.
 
-11) Commit: Add API endpoint to set the “current run” for a session
+11) Commit: Add API endpoint to set the “current run” for a session (done)
    - `PUT /sessions/{session_id}/current-run` with validation and authorization hooks.
    - Acceptance: UI run selector persists and affects all bundle reads.
 
