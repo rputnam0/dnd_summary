@@ -480,6 +480,57 @@ class Artifact(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class CharacterSheetSnapshot(Base):
+    __tablename__ = "character_sheet_snapshots"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    character_slug: Mapped[str] = mapped_column(String, nullable=False)
+    character_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_path: Mapped[str] = mapped_column(String, nullable=False)
+    source_hash: Mapped[str] = mapped_column(String, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "character_slug",
+            "source_hash",
+            name="uq_character_sheet_snapshot",
+        ),
+    )
+
+
+class DiceRoll(Base):
+    __tablename__ = "dice_rolls"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    utterance_id: Mapped[str | None] = mapped_column(ForeignKey("utterances.id"), nullable=True)
+    source_path: Mapped[str] = mapped_column(String, nullable=False)
+    source_hash: Mapped[str] = mapped_column(String, nullable=False)
+    roll_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    t_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    character_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    kind: Mapped[str] = mapped_column(String, nullable=False, default="other")
+    expression: Mapped[str | None] = mapped_column(String, nullable=True)
+    total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "source_hash",
+            "roll_index",
+            name="uq_dice_roll",
+        ),
+    )
+
+
 class Embedding(Base):
     __tablename__ = "embeddings"
 

@@ -17,6 +17,8 @@ Prefer these names so the worker can discover inputs deterministically:
 - `transcript.jsonl`
 - `transcript.txt`
 - `transcript.srt`
+- `character_sheets/<character_slug>.json`
+- `rolls.jsonl`
 
 If you have multiple variants, place non-canonical versions in `extras/`.
 

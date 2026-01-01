@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
@@ -11,8 +12,16 @@ from temporalio import activity
 from dnd_summary.campaign_config import CampaignConfig, load_campaign_config, speaker_alias_map
 from dnd_summary.config import settings
 from dnd_summary.db import get_session
+from dnd_summary.external_sources import (
+    find_character_sheet_paths,
+    find_rolls_path,
+    load_character_sheet,
+    parse_rolls_jsonl,
+)
 from dnd_summary.models import (
     Campaign,
+    CharacterSheetSnapshot,
+    DiceRoll,
     Entity,
     EntityAlias,
     Participant,
@@ -149,6 +158,114 @@ def _ensure_participants(
     return participants
 
 
+def _relative_source_path(path: Path) -> str:
+    base = Path(settings.transcripts_root).resolve()
+    try:
+        return str(path.resolve().relative_to(base))
+    except ValueError:
+        return str(path.resolve())
+
+
+def _ingest_character_sheets(
+    session,
+    campaign: Campaign,
+    session_obj: Session,
+    session_dir: Path,
+) -> dict:
+    sheets = find_character_sheet_paths(session_dir)
+    if not sheets:
+        return {"count": 0, "errors": []}
+
+    errors: list[str] = []
+    stored = 0
+    for sheet_path in sheets:
+        try:
+            payload = load_character_sheet(sheet_path)
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            errors.append(f"{sheet_path.name}: {exc}")
+            continue
+        source_hash = sha256(sheet_path.read_bytes()).hexdigest()
+        character_slug = sheet_path.stem
+        if not character_slug:
+            errors.append(f"{sheet_path.name}: missing character slug")
+            continue
+        existing = (
+            session.query(CharacterSheetSnapshot)
+            .filter_by(session_id=session_obj.id, character_slug=character_slug)
+            .all()
+        )
+        if any(record.source_hash == source_hash for record in existing):
+            continue
+        if existing:
+            session.query(CharacterSheetSnapshot).filter_by(
+                session_id=session_obj.id,
+                character_slug=character_slug,
+            ).delete(synchronize_session=False)
+        character_name = payload.get("name") if isinstance(payload, dict) else None
+        snapshot = CharacterSheetSnapshot(
+            campaign_id=campaign.id,
+            session_id=session_obj.id,
+            character_slug=character_slug,
+            character_name=character_name if isinstance(character_name, str) else None,
+            source_path=_relative_source_path(sheet_path),
+            source_hash=source_hash,
+            payload=payload,
+            created_at=datetime.utcnow(),
+        )
+        session.add(snapshot)
+        stored += 1
+
+    return {"count": stored, "errors": errors}
+
+
+def _ingest_dice_rolls(
+    session,
+    campaign: Campaign,
+    session_obj: Session,
+    session_dir: Path,
+) -> dict:
+    rolls_path = find_rolls_path(session_dir)
+    if not rolls_path:
+        return {"count": 0, "errors": []}
+
+    source_hash = sha256(rolls_path.read_bytes()).hexdigest()
+    source_path = _relative_source_path(rolls_path)
+    existing = (
+        session.query(DiceRoll)
+        .filter_by(session_id=session_obj.id, source_path=source_path)
+        .first()
+    )
+    if existing and existing.source_hash == source_hash:
+        return {"count": 0, "errors": []}
+    if existing:
+        session.query(DiceRoll).filter_by(
+            session_id=session_obj.id,
+            source_path=source_path,
+        ).delete(synchronize_session=False)
+
+    rolls, errors = parse_rolls_jsonl(rolls_path)
+    for roll in rolls:
+        session.add(
+            DiceRoll(
+                campaign_id=campaign.id,
+                session_id=session_obj.id,
+                utterance_id=None,
+                source_path=source_path,
+                source_hash=source_hash,
+                roll_index=roll.line_number,
+                t_ms=roll.t_ms,
+                character_name=roll.character if isinstance(roll.character, str) else None,
+                kind=roll.kind,
+                expression=roll.expression if isinstance(roll.expression, str) else None,
+                total=roll.total,
+                detail=roll.detail,
+                created_at=datetime.utcnow(),
+            )
+        )
+
+    return {"count": len(rolls), "errors": errors}
+
+
 @activity.defn
 async def ingest_transcript_activity(payload: dict) -> dict:
     """Locate the best transcript artifact for a session.
@@ -168,7 +285,6 @@ async def ingest_transcript_activity(payload: dict) -> dict:
     )
     src = _find_transcript_source(session_dir)
     transcript_path = Path(src.path)
-
 
     transcript_hash = sha256(transcript_path.read_bytes()).hexdigest()
     utterances = parse_transcript(transcript_path)
@@ -266,6 +382,9 @@ async def ingest_transcript_activity(payload: dict) -> dict:
 
         run.status = "completed"
         run.finished_at = datetime.utcnow()
+
+        sheets_result = _ingest_character_sheets(session, campaign, session_obj, session_dir)
+        rolls_result = _ingest_dice_rolls(session, campaign, session_obj, session_dir)
         session.flush()
 
     return {
@@ -279,4 +398,6 @@ async def ingest_transcript_activity(payload: dict) -> dict:
         "run_id": run.id,
         "session_id": session_obj.id,
         "campaign_id": campaign.id,
+        "character_sheets": sheets_result,
+        "dice_rolls": rolls_result,
     }

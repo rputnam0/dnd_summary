@@ -10,7 +10,16 @@ from dnd_summary.activities.transcripts import (
     ingest_transcript_activity,
 )
 from dnd_summary.campaign_config import CampaignConfig, CharacterConfig, ParticipantConfig
-from dnd_summary.models import Campaign, Entity, EntityAlias, Participant, ParticipantCharacter, Utterance
+from dnd_summary.models import (
+    Campaign,
+    CharacterSheetSnapshot,
+    DiceRoll,
+    Entity,
+    EntityAlias,
+    Participant,
+    ParticipantCharacter,
+    Utterance,
+)
 from tests.factories import create_campaign
 
 
@@ -104,3 +113,71 @@ def test_ingest_transcript_activity_creates_run_and_utterances(tmp_path, db_sess
         ingest_transcript_activity({"campaign_slug": campaign_slug, "session_slug": session_slug})
     )
     assert result_again["utterances_reused"] is True
+
+
+def test_ingest_transcript_activity_ingests_external_sources(
+    tmp_path, db_session, settings_overrides
+):
+    settings_overrides(transcripts_root=str(tmp_path))
+    campaign_slug = "alpha"
+    session_slug = "session_2"
+    session_dir = tmp_path / "campaigns" / campaign_slug / "sessions" / session_slug
+    session_dir.mkdir(parents=True)
+    (session_dir / "transcript.jsonl").write_text(
+        json.dumps({"speaker": "Al", "start": 0.0, "end": 1.0, "text": "Hi"})
+        + "\n",
+        encoding="utf-8",
+    )
+    sheets_dir = session_dir / "character_sheets"
+    sheets_dir.mkdir()
+    (sheets_dir / "hero.json").write_text(
+        json.dumps({"name": "Hero", "class": "Fighter"}),
+        encoding="utf-8",
+    )
+    (session_dir / "rolls.jsonl").write_text(
+        json.dumps(
+            {
+                "t_ms": 1000,
+                "character": "Hero",
+                "kind": "attack",
+                "expression": "1d20+7",
+                "total": 19,
+                "detail": {"die": 12},
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "t_ms": 1500,
+                "character": "Hero",
+                "kind": "damage",
+                "expression": "1d8+4",
+                "total": 10,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = asyncio.run(
+        ingest_transcript_activity({"campaign_slug": campaign_slug, "session_slug": session_slug})
+    )
+
+    db_session.expire_all()
+    snapshots = (
+        db_session.query(CharacterSheetSnapshot)
+        .filter_by(session_id=result["session_id"])
+        .all()
+    )
+    assert len(snapshots) == 1
+    assert snapshots[0].character_slug == "hero"
+    assert snapshots[0].character_name == "Hero"
+    rolls = (
+        db_session.query(DiceRoll)
+        .filter_by(session_id=result["session_id"])
+        .order_by(DiceRoll.roll_index.asc())
+        .all()
+    )
+    assert len(rolls) == 2
+    assert rolls[0].t_ms == 1000
+    assert rolls[0].character_name == "Hero"
