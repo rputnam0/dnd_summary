@@ -202,6 +202,21 @@ class Event(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class EventEntity(Base):
+    __tablename__ = "event_entities"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), nullable=False)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    event_id: Mapped[str] = mapped_column(ForeignKey("events.id"), nullable=False)
+    entity_id: Mapped[str] = mapped_column(ForeignKey("entities.id"), nullable=False)
+    role: Mapped[str | None] = mapped_column(String, nullable=True)
+    evidence: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("event_id", "entity_id", name="uq_event_entity"),)
+
+
 class Quote(Base):
     __tablename__ = "quotes"
 
@@ -230,6 +245,21 @@ class Thread(Base):
     evidence: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ThreadEntity(Base):
+    __tablename__ = "thread_entities"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), nullable=False)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    thread_id: Mapped[str] = mapped_column(ForeignKey("threads.id"), nullable=False)
+    entity_id: Mapped[str] = mapped_column(ForeignKey("entities.id"), nullable=False)
+    role: Mapped[str | None] = mapped_column(String, nullable=True)
+    evidence: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("thread_id", "entity_id", name="uq_thread_entity"),)
 
 
 class ThreadUpdate(Base):
@@ -290,6 +320,21 @@ class EntityMention(Base):
     mention_id: Mapped[str] = mapped_column(ForeignKey("mentions.id"), nullable=False)
     entity_id: Mapped[str] = mapped_column(ForeignKey("entities.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SceneEntity(Base):
+    __tablename__ = "scene_entities"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), nullable=False)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    scene_id: Mapped[str] = mapped_column(ForeignKey("scenes.id"), nullable=False)
+    entity_id: Mapped[str] = mapped_column(ForeignKey("entities.id"), nullable=False)
+    role: Mapped[str | None] = mapped_column(String, nullable=True)
+    evidence: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("scene_id", "entity_id", name="uq_scene_entity"),)
 
 
 class Artifact(Base):

@@ -101,7 +101,7 @@ the repo in a working state.
    - Acceptance: users can remove sensitive data and export for backup.
 
 ### Phase 3: Data model upgrades for real interactivity (stop relying on name strings)
-14) Commit: Add relational links for events/scenes/threads to entities
+14) Commit: Add relational links for events/scenes/threads to entities (done)
    - New tables: `event_entities`, `scene_entities`, `thread_entities` (with role + evidence).
    - Acceptance: “show me everything about Baba Yaga” no longer depends on string matching.
 
