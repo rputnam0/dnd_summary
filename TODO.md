@@ -7,10 +7,7 @@ Definition of Done (all must pass):
 - Manual UI smoke checks recorded (run start/progress, current run persistence, evidence links).
 
 Commit-sized TODO (in order):
-1) Ask the campaign panel in UI
-   - Acceptance: DM/player can submit a question and see evidence-cited answers.
-   - Tests: API tests for `/ask` already exist or are added as needed.
-2) User testing round 1
+1) User testing round 1
    - Acceptance: 5 DMs + 5 players complete `docs/USER_TESTING.md` task script; findings logged with fixes ranked.
 
 MVP verification checklist (record results in the PRD or a release note):
@@ -50,6 +47,7 @@ Start after MVP close-out is complete. Each item is a PR-sized batch with clear 
 
 
 ## Recently completed
+- Ask the campaign panel in UI
 - Summary variants + artifact switcher in UI
 - Corrections inform extraction/resolve (canonical map + activity tests)
 - Trust + provenance signals in UI (confidence + corrected badge)

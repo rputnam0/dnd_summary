@@ -64,6 +64,10 @@ const elements = {
   qualityMetrics: document.getElementById("qualityMetrics"),
   runDiagnostics: document.getElementById("runDiagnostics"),
   artifactLinks: document.getElementById("artifactLinks"),
+  askInput: document.getElementById("askInput"),
+  askButton: document.getElementById("askButton"),
+  askAnswer: document.getElementById("askAnswer"),
+  askCitations: document.getElementById("askCitations"),
   threadList: document.getElementById("threadList"),
   sceneList: document.getElementById("sceneList"),
   eventList: document.getElementById("eventList"),
@@ -210,6 +214,33 @@ async function uploadTranscript(campaignSlug, sessionSlug, file) {
   return response.json();
 }
 
+async function askCampaign(question) {
+  const headers = { "Content-Type": "application/json" };
+  if (state.currentUserId) {
+    headers["X-User-Id"] = state.currentUserId;
+  }
+  const params = new URLSearchParams();
+  if (elements.sessionOnlyToggle?.checked && state.selectedSession) {
+    params.set("session_id", state.selectedSession);
+  } else if (elements.sessionOnlyToggle && !elements.sessionOnlyToggle.checked) {
+    params.set("include_all_runs", "true");
+  }
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const response = await fetch(
+    `${API_BASE}/campaigns/${state.selectedCampaign}/ask${query}`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ question }),
+    }
+  );
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Ask failed: ${response.status}`);
+  }
+  return response.json();
+}
+
 function clearNode(node) {
   while (node.firstChild) {
     node.removeChild(node.firstChild);
@@ -295,6 +326,65 @@ function renderSummary(bundle) {
   const variant = state.summaryVariant || "summary_text";
   const text = summaryTextForVariant(bundle, variant);
   renderParagraphs(text, bundle ? bundle.run_status : null);
+}
+
+function renderAskAnswer(text) {
+  if (!elements.askAnswer) return;
+  clearNode(elements.askAnswer);
+  if (!text) {
+    elements.askAnswer.textContent = "No answer yet.";
+    return;
+  }
+  text
+    .split(/\n+/)
+    .filter((part) => part.trim())
+    .forEach((part) => {
+      const p = document.createElement("p");
+      p.textContent = part.trim();
+      elements.askAnswer.appendChild(p);
+    });
+}
+
+function renderAskCitations(citations) {
+  if (!elements.askCitations) return;
+  clearNode(elements.askCitations);
+  if (!citations || citations.length === 0) {
+    elements.askCitations.textContent = "No citations returned.";
+    return;
+  }
+  citations.forEach((citation, index) => {
+    const card = document.createElement("div");
+    card.className = "citation-card";
+    const title = document.createElement("h4");
+    title.textContent = `Citation ${index + 1}`;
+    const quote = document.createElement("p");
+    quote.textContent = citation.quote || "Citation available.";
+    const meta = document.createElement("p");
+    meta.className = "meta";
+    meta.textContent = citation.note || citation.utterance_id || "";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "button";
+    button.textContent = "View evidence";
+    button.addEventListener("click", () => {
+      const evidence = [
+        {
+          utterance_id: citation.utterance_id,
+          kind: "support",
+        },
+      ];
+      openEvidence("Answer evidence", evidence);
+    });
+    card.append(title, quote, meta, button);
+    elements.askCitations.appendChild(card);
+  });
+}
+
+function clearAskPanel() {
+  renderAskAnswer("");
+  if (elements.askCitations) {
+    clearNode(elements.askCitations);
+  }
 }
 
 function updateSummaryVariantOptions(bundle) {
@@ -1494,6 +1584,7 @@ async function loadSession(sessionId) {
   renderSessions();
   const session = state.sessionMap[sessionId];
   renderSessionMeta(session);
+  clearAskPanel();
   setStatus("Loading session runs...");
   const runs = await fetchJson(`/sessions/${sessionId}/runs`);
   const activeRun = populateRunSelect(runs);
@@ -2392,6 +2483,42 @@ async function init() {
       runSearch();
     }
   });
+  if (elements.askButton && elements.askInput) {
+    elements.askButton.addEventListener("click", async () => {
+      if (!state.selectedCampaign) {
+        setStatus("Select a campaign before asking.");
+        return;
+      }
+      const question = elements.askInput.value.trim();
+      if (!question) {
+        setStatus("Enter a question to ask.");
+        return;
+      }
+      elements.askButton.disabled = true;
+      renderAskAnswer("Thinking...");
+      renderAskCitations([]);
+      setStatus("Asking the campaign...");
+      try {
+        const response = await askCampaign(question);
+        renderAskAnswer(response.answer);
+        renderAskCitations(response.citations || []);
+        setStatus("Answer ready.");
+      } catch (err) {
+        console.error(err);
+        renderAskAnswer("Failed to get an answer.");
+        renderAskCitations([]);
+        setStatus("Ask failed.");
+      } finally {
+        elements.askButton.disabled = false;
+      }
+    });
+    elements.askInput.addEventListener("keydown", async (event) => {
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        elements.askButton.click();
+      }
+    });
+  }
   elements.closeSearch.addEventListener("click", closeSearch);
   elements.closeEntity.addEventListener("click", closeEntityPanel);
   elements.closeThread.addEventListener("click", closeThreadPanel);

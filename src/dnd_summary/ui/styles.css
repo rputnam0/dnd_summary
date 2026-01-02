@@ -484,6 +484,61 @@ button.danger {
   line-height: 1.6;
 }
 
+.ask-controls {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-top: 12px;
+}
+
+.ask-controls textarea {
+  flex: 1;
+  min-height: 70px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(207, 174, 88, 0.2);
+  background: rgba(12, 14, 18, 0.6);
+  color: var(--ink);
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 0.9rem;
+  resize: vertical;
+}
+
+.citation-list {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.citation-card {
+  padding: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(207, 174, 88, 0.2);
+  background: rgba(10, 12, 16, 0.6);
+}
+
+.citation-card h4 {
+  margin: 0 0 6px;
+  font-size: 0.85rem;
+  color: var(--gold-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.citation-card p {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.citation-card .meta {
+  margin-bottom: 8px;
+}
+
+.citation-card button {
+  margin-top: 4px;
+}
+
 .quality-metrics {
   margin-top: 16px;
   padding: 14px;
@@ -1034,5 +1089,9 @@ button.danger {
   input[type="search"] {
     min-width: unset;
     width: 100%;
+  }
+
+  .ask-controls {
+    flex-direction: column;
   }
 }
