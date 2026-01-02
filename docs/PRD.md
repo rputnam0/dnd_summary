@@ -21,6 +21,31 @@ Given a transcript placed under `transcripts/**`, the system produces:
 - Every displayed quote in the DOCX has evidence and matches the referenced transcript span exactly.
 - Re-running a session creates a new immutable Run; the UI can select which Run is “current”.
 
+## 2.1 MVP scope (current target)
+The MVP delivers a local-first DM companion + player aid loop:
+- Session onboarding: create a session (slug + title + date required) and upload a transcript from the UI.
+- DM can upload a transcript, start a run, monitor progress, and select the current Run in the UI.
+- Evidence-first browsing: summary, scenes, events, quotes, threads, entities, and transcript evidence.
+- DM curation: entity/thread corrections, redactions, spoiler tags, notes, and bookmarks.
+- Player-safe views with role gating (no redactions or spoilers leaked).
+- Search (lexical + semantic) and "Ask the campaign" for evidence-backed answers.
+- Downloadable summary artifacts (DOCX/TXT) with provenance.
+- Data lifecycle controls: export/delete session data from the UI.
+- Trust signals: confidence and correction badges are visible where applicable.
+
+## 2.2 MVP completion criteria (Definition of Done)
+MVP is complete when all of the following are true:
+- Pipeline: a canonical transcript produces a completed Run, summary DOCX, and structured memory.
+- Evidence: all displayed quotes are exact substrings of transcript text with valid spans.
+- Runs: UI can set and persist a "current run" per session.
+- UI: DM can create a session (title/date required), upload a transcript, start a run, watch progress, and view evidence links.
+- Roles: player view respects spoilers/redactions and hides DM-only panels.
+- Corrections: known fixes (rename/merge/hide/status) persist and influence reruns.
+- Privacy: export/delete session data works and is accessible in the UI.
+- Variants: summary variants and Ask-the-campaign are usable in the UI.
+- Search/Q&A: results include evidence or transcript spans; semantic answers cite sources.
+- Tests: `uv run pytest` passes; new MVP behaviors have coverage or documented manual checks.
+
 ## 3) Scope
 ### In scope (v0)
 - Multi-campaign organization (campaign boundary enforced in schema + retrieval).
@@ -139,6 +164,7 @@ The UI and future “memory tools” rely on these guarantees.
 
 **Session**
 - `session_id`, `campaign_id`, `slug`, `session_number` (optional), `title` (optional), `occurred_at` (optional)
+- UI creation requires `title` and `occurred_at`, but legacy records may be missing them.
 
 **Participant (Player)**
 - `participant_id`, `campaign_id`, `display_name`, `role` (`dm|player|guest`)
@@ -301,6 +327,18 @@ Edits allowed:
 
 Corrections are persisted as overrides and must influence subsequent runs (constraints for extraction and resolution).
 
+### 12.1 Correction propagation policy
+- Corrections are stored as auditable overrides and projected into a campaign "canonical map".
+- The canonical map is used in extraction/resolve prompts so LLM outputs prefer canonical names.
+- Resolution applies corrections deterministically:
+  - **Rename**: new name becomes canonical; old name is treated as an alias.
+  - **Merge**: merged entity IDs map to the target entity and never reappear in new runs.
+  - **Hide**: hidden entities are excluded from new runs and UI lists.
+  - **Thread updates**: status/title/summary overrides apply consistently across runs.
+- Summary and UI outputs use corrected canonical names (not raw mention text).
+- Player edits are stored as "pending" and only affect the canonical map after DM approval.
+- The correction badge indicates a DM-approved correction.
+
 ## 13) Quality plan: metrics, thresholds, evaluation
 ### 13.1 Metrics
 - **Quote integrity**: 100% for displayed quotes (hard requirement by design).
@@ -319,6 +357,11 @@ Corrections are persisted as overrides and must influence subsequent runs (const
 - Run evals on each prompt version; promote versions only when they meet thresholds.
 - DSPy optimization runs offline and emits a new pinned prompt version.
 
+### 13.4 UX validation (user testing)
+- Run task-based tests with at least 5 DMs and 5 players.
+- Track time-to-task, success rate, and top confusion points.
+- Log issues and fold the top fixes into the next sprint.
+
 ## 14) Non-functional requirements
 - **Privacy**: transcripts and derived memory may be sensitive; provide campaign/session deletion and export.
 - **Portability**: local-first; single Docker Compose for infra.
@@ -326,40 +369,24 @@ Corrections are persisted as overrides and must influence subsequent runs (const
 - **Multi-tenancy (future)**: campaign boundaries enforced in schema; future auth should map users→campaign permissions.
 
 ## 15) Roadmap
-### v0 (done): pipeline + read-only dashboard
-- Temporal + Postgres local dev (Docker Compose).
-- Transcript ingestion → utterances in DB.
-- Full-transcript structured extraction → DB (entities/scenes/events/quotes/threads).
-- Summary generation (plan → write) and DOCX export.
-- Read API + UI dashboard for browsing/search and run diagnostics.
+### MVP close-out (target completion state)
+- UI session onboarding: create session metadata (title/date required) + upload transcript.
+- UI run controls: start run, observe progress, set current run.
+- Evidence-first navigation and confidence/trust indicators in UI (confidence + correction badges).
+- Data lifecycle controls in UI (export/delete).
+- Corrections inform extraction/resolve so known fixes persist across reruns.
+- Summary variants + Ask the campaign surfaced in the UI.
+- First user testing round feeds the final MVP polish list.
 
-### v0.5 (local dashboard MVP: run from the UI)
-- Migrations + indexes (Alembic) so schema changes are safe and repeatable.
-- Start runs from the UI (Temporal-backed) and show progress (polling or SSE).
-- Explicit “current run” per session (persisted selection; not just latest completed).
-- Data lifecycle controls: export + deletion (privacy and portability).
-- Evidence-first navigation: jump from scenes/events/quotes to transcript spans.
+### Post-MVP (v1+ polish and scale)
+- Information architecture refresh (role-based views, density tuning, mobile polish).
+- Campaign config editor (speaker mappings, participant roster, PC links).
+- Session management polish (edit title/date, compare runs, show change log).
+- Data model additions: relationships, thread objectives, utterance mode, DM-as-NPC attribution.
+- Performance: bundle slicing/pagination, query optimization, and caching for large campaigns.
+- External sources UX (character sheets + dice rolls surfaced in UI).
+- Repeat user testing after major UI changes.
 
-### v1 (curation + roles: DM + players safely share the same campaign)
-- Human correction loop in UI/API:
-  - Rename/merge/hide entities; add/remove aliases; mark false positives.
-  - Edit thread status/title/summary; merge threads; manage quest history.
-  - Redactions and spoiler controls; optional “DM as NPC” attribution for quotes.
-- Canonical campaign state derived from extracted runs + corrections (auditable overrides).
-- Auth + campaign membership roles (`dm|player`) with role-gated UI panels and endpoints.
-- Data model upgrades for interactivity (reduce name-string heuristics):
-  - Relational links for entity↔event/scene/thread
-  - Canonical thread IDs across sessions (stable quest journal)
-
-### v1.5 (semantic recall, grounded)
-- Embeddings store + vector index (e.g., pgvector) with versioning.
-- Semantic search across utterances/events/scenes/entities that always returns evidence.
-- “Ask the campaign” Q&A with spoiler-aware retrieval and evidence-first answers.
-
-### v2 (optimization + images)
-- DSPy optimization loop + eval dashboards + prompt version promotion process.
-- Scene prompt generation and optional image rendering (pluggable providers).
-
-### vNext (external sources)
-- Character sheet snapshots and dice/roll logs (timestamped) ingested as optional session inputs.
-- When roll logs include timestamps, align roll events to transcript time and reference as evidence.
+### Longer-term (v1.5+)
+- Semantic recall improvements, eval dashboards, and prompt optimization.
+- Optional image generation for scene prompts.

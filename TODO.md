@@ -1,5 +1,68 @@
 # Project TODO
 
+## MVP Close-Out Plan (finish PRD v0)
+Definition of Done (all must pass):
+- PRD MVP criteria in `docs/PRD.md` are met and verified.
+- `uv run pytest` passes.
+- Manual UI smoke checks recorded (run start/progress, current run persistence, evidence links).
+
+Commit-sized TODO (in order):
+1) UI session onboarding + transcript upload
+   - Acceptance: DM can create a new session (slug + title/date required) and upload a transcript.
+   - Notes: add API endpoint to create sessions with required metadata.
+   - Tests: add API tests for session creation + transcript upload if missing; run `uv run pytest`.
+2) UI run controls + progress feed
+   - Acceptance: DM can start a run, see step progress via polling, and view completion state.
+   - Tests: add API tests for run status feed if missing.
+3) Persist current run selection from UI
+   - Acceptance: selecting a run updates `sessions.current_run_id` and survives reload.
+   - Tests: update/add API test for `PUT /sessions/{id}/current-run`.
+4) Data lifecycle controls in UI (export/delete)
+   - Acceptance: DM can export session data and delete a session from the UI.
+   - Tests: API tests for export/delete if missing; verify session is removed from lists.
+5) Trust + provenance signals in UI
+   - Acceptance: show confidence where available and add a correction badge when DM-approved.
+   - Tests: UI smoke check; add a lightweight API snapshot test if practical.
+6) Corrections inform extraction/resolve
+   - Acceptance: corrections project into a canonical map used by extraction/resolution and summary inputs.
+   - Acceptance: hidden/merged/renamed entities and thread status changes are honored in reruns.
+   - Tests: add activity tests that inject corrections and assert outputs.
+7) Summary variants + artifact switcher in UI
+   - Acceptance: DM can toggle and download player/DM/hooks/NPC artifacts.
+   - Tests: UI smoke check + API test for artifacts payload if needed.
+8) Ask the campaign panel in UI
+   - Acceptance: DM/player can submit a question and see evidence-cited answers.
+   - Tests: API tests for `/ask` already exist or are added as needed.
+9) User testing round 1
+   - Acceptance: 5 DMs + 5 players complete `docs/USER_TESTING.md` task script; findings logged with fixes ranked.
+
+MVP verification checklist (record results in the PRD or a release note):
+- Create a session with required metadata, upload transcript, start a run, and see progress update to completion.
+- Set current run, refresh the page, confirm the selection persists.
+- Open evidence for a quote and confirm the highlighted text matches transcript content.
+- Apply a redaction/spoiler and confirm the player view hides it.
+- Ask the campaign returns an answer with citations.
+- Export a session zip and delete the session; confirm it disappears from lists.
+
+## Post-MVP Roadmap (feature branch: post-mvp-ui-polish)
+Start after MVP close-out is complete. Each item is a PR-sized batch with clear acceptance.
+1) IA and layout refresh (role-based views, collapsible panels, mobile polish)
+   - Acceptance: DM and player paths are distinct; UI density is reduced without losing data.
+2) Campaign config editor
+   - Acceptance: DM can manage speaker mappings, participants, and PC links from the UI.
+3) Session management polish
+   - Acceptance: edit session title/date, compare runs, and view a change log of corrections.
+4) Performance pass (bundle slicing, pagination, caching)
+   - Acceptance: large sessions load without timeouts; bundle payloads are smaller by default.
+5) Relationship and objective modeling
+   - Acceptance: add relationships + thread objectives and expose them in the UI.
+6) External sources UX
+   - Acceptance: character sheets and dice rolls are visible in the session view with evidence.
+7) DM prep pack + player share
+   - Acceptance: "next session prep" panel + shareable player recap view.
+8) User testing round 2
+   - Acceptance: repeat task tests and close top UI regressions.
+
 ## Current implementation recap
 - End-to-end pipeline works (local runner + Temporal workflow): ingest → extract → persist → resolve → plan → write → render DOCX.
 - Canonical inputs under `transcripts/**` with optional `campaign.json` for participant/character mapping.
@@ -37,7 +100,7 @@
 - Evidence repair activity, resume-partial CLI, and cache verification tooling
 - Admin metrics endpoints + structured logging defaults
 
-## Roadmap (commit-sized)
+## Archive: Completed Roadmap (commit-sized)
 
 This section is intentionally broken into small commits. Each item should be shippable and leave
 the repo in a working state.
