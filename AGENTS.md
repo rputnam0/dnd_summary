@@ -76,6 +76,17 @@ Dependency management:
   - `tests/test_render.py`: DOCX rendering output.
   - `tests/test_campaign_config.py`: campaign config parsing and alias maps.
 
+## TODO Execution Protocol
+- Always start by reading `TODO.md` and `docs/PRD.md` to confirm the active phase and next item.
+- Work items strictly in order: complete MVP Close-Out items (1..N) before starting Post-MVP.
+- Only implement one TODO item at a time; do not start the next item until acceptance criteria are met.
+- If a TODO references a spec (e.g., `docs/CORRECTIONS.md`), follow it and update it if behavior changes.
+- When an item is complete:
+  - Update `TODO.md` to mark it done (move it to "Recently completed" or annotate with "(done)").
+  - Record any manual checks in the MVP verification checklist.
+  - Commit with a message that references the TODO item number or title.
+- If blocked or ambiguous, pause and ask for clarification before proceeding.
+
 ## Commit & Pull Request Guidelines
 - Initialize a git repo and commit after each reasonable feature implementation.
 - Use concise, imperative commit messages (e.g., “Add transcript ingester”).
