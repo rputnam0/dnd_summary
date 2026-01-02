@@ -581,6 +581,25 @@ function renderThreads(threads) {
     status.textContent = thread.status || "active";
     card.appendChild(status);
 
+    const tagRow = document.createElement("div");
+    tagRow.className = "tag-row";
+    if (thread.corrected) {
+      const tag = document.createElement("span");
+      tag.className = "tag correction";
+      tag.textContent = "Corrected";
+      tagRow.appendChild(tag);
+    }
+    if (thread.confidence != null) {
+      const tag = document.createElement("span");
+      tag.className = "tag confidence";
+      const percent = Math.round(thread.confidence * 100);
+      tag.textContent = `Confidence ${percent}%`;
+      tagRow.appendChild(tag);
+    }
+    if (tagRow.childElementCount > 0) {
+      card.appendChild(tagRow);
+    }
+
     if (thread.updates && thread.updates.length > 0) {
       const updates = document.createElement("ul");
       updates.className = "thread-updates";
@@ -661,15 +680,24 @@ function renderEvents(events) {
     time.className = "meta";
     time.textContent = `${formatTime(event.start_ms)} - ${formatTime(event.end_ms)}`;
     card.appendChild(time);
+    const row = document.createElement("div");
+    row.className = "tag-row";
     if (event.entities && event.entities.length > 0) {
-      const row = document.createElement("div");
-      row.className = "tag-row";
       event.entities.forEach((entity) => {
         const tag = document.createElement("span");
         tag.className = "tag";
         tag.textContent = entity;
         row.appendChild(tag);
       });
+    }
+    if (event.confidence != null) {
+      const tag = document.createElement("span");
+      tag.className = "tag confidence";
+      const percent = Math.round(event.confidence * 100);
+      tag.textContent = `Confidence ${percent}%`;
+      row.appendChild(tag);
+    }
+    if (row.childElementCount > 0) {
       card.appendChild(row);
     }
     if (event.evidence && event.evidence.length > 0) {
@@ -799,6 +827,15 @@ function renderEntities(entities) {
       desc.textContent = entity.description;
       card.appendChild(desc);
     }
+    if (entity.corrected) {
+      const tagRow = document.createElement("div");
+      tagRow.className = "tag-row";
+      const tag = document.createElement("span");
+      tag.className = "tag correction";
+      tag.textContent = "Corrected";
+      tagRow.appendChild(tag);
+      card.appendChild(tagRow);
+    }
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = "Open dossier";
@@ -831,6 +868,24 @@ function renderQuestJournal(threads) {
     status.className = "thread-status";
     status.textContent = thread.status || "active";
     card.appendChild(status);
+    const tagRow = document.createElement("div");
+    tagRow.className = "tag-row";
+    if (thread.corrected) {
+      const tag = document.createElement("span");
+      tag.className = "tag correction";
+      tag.textContent = "Corrected";
+      tagRow.appendChild(tag);
+    }
+    if (thread.confidence != null) {
+      const tag = document.createElement("span");
+      tag.className = "tag confidence";
+      const percent = Math.round(thread.confidence * 100);
+      tag.textContent = `Confidence ${percent}%`;
+      tagRow.appendChild(tag);
+    }
+    if (tagRow.childElementCount > 0) {
+      card.appendChild(tagRow);
+    }
     if (thread.updates && thread.updates.length > 0) {
       const updates = document.createElement("ul");
       updates.className = "thread-updates";
@@ -894,6 +949,15 @@ function renderCodex(entities) {
       const desc = document.createElement("p");
       desc.textContent = entity.description;
       card.appendChild(desc);
+    }
+    if (entity.corrected) {
+      const tagRow = document.createElement("div");
+      tagRow.className = "tag-row";
+      const tag = document.createElement("span");
+      tag.className = "tag correction";
+      tag.textContent = "Corrected";
+      tagRow.appendChild(tag);
+      card.appendChild(tagRow);
     }
     const button = document.createElement("button");
     button.type = "button";

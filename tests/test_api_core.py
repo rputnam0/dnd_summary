@@ -11,6 +11,7 @@ from tests.factories import (
     create_session,
     create_user,
 )
+from dnd_summary.models import Correction, Thread
 
 
 def _auth_headers(user_id: str) -> dict[str, str]:
@@ -342,3 +343,60 @@ def test_export_and_delete_session(api_client, db_session, settings_overrides, t
         headers=_auth_headers(dm_user.id),
     )
     assert response.status_code == status.HTTP_200_OK
+
+
+def test_corrections_flags(api_client, db_session, settings_overrides):
+    settings_overrides(auth_enabled=True)
+    campaign = create_campaign(db_session, slug="alpha")
+    dm_user = create_user(db_session, display_name="DM")
+    create_membership(db_session, campaign=campaign, user=dm_user, role="dm")
+    session_obj = create_session(db_session, campaign=campaign, slug="session_6")
+    entity = create_entity(db_session, campaign=campaign, name="Alyx", entity_type="character")
+    thread = Thread(
+        run_id=create_run(db_session, campaign=campaign, session_obj=session_obj).id,
+        session_id=session_obj.id,
+        title="Find the relic",
+        kind="quest",
+        status="active",
+    )
+    db_session.add(thread)
+    db_session.flush()
+    db_session.add(
+        Correction(
+            campaign_id=campaign.id,
+            session_id=None,
+            target_type="entity",
+            target_id=entity.id,
+            action="entity_rename",
+            payload={"name": "Alyxandra"},
+            created_by=dm_user.id,
+        )
+    )
+    db_session.add(
+        Correction(
+            campaign_id=campaign.id,
+            session_id=None,
+            target_type="thread",
+            target_id=thread.id,
+            action="thread_status",
+            payload={"status": "completed"},
+            created_by=dm_user.id,
+        )
+    )
+    db_session.commit()
+
+    response = api_client.get(
+        f"/campaigns/{campaign.slug}/entities",
+        headers=_auth_headers(dm_user.id),
+    )
+    assert response.status_code == status.HTTP_200_OK
+    entities = response.json()
+    assert entities[0]["corrected"] is True
+
+    response = api_client.get(
+        f"/campaigns/{campaign.slug}/threads",
+        headers=_auth_headers(dm_user.id),
+    )
+    assert response.status_code == status.HTTP_200_OK
+    threads = response.json()
+    assert threads[0]["corrected"] is True

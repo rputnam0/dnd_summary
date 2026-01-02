@@ -132,6 +132,20 @@ def _entity_alias_changes(
     return adds, removes
 
 
+def _has_correction(
+    corrections: list[Correction],
+    target_id: str,
+    actions: set[str] | None = None,
+) -> bool:
+    for correction in corrections:
+        if correction.target_id != target_id:
+            continue
+        if actions and correction.action not in actions:
+            continue
+        return True
+    return False
+
+
 def _thread_correction_maps(
     corrections: list[Correction],
 ) -> tuple[set[str], dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
@@ -795,6 +809,18 @@ def list_entities(
         campaign = _campaign_for_slug(session, campaign_slug, request)
         corrections = _load_corrections(session, campaign.id, None, "entity")
         hidden_ids, merge_map, rename_map = _entity_correction_maps(corrections)
+        corrected_actions = {
+            "entity_rename",
+            "entity_alias_add",
+            "entity_alias_remove",
+            "entity_merge",
+            "entity_hide",
+            "rename",
+            "alias_add",
+            "alias_remove",
+            "merge",
+            "hide",
+        }
         spoiler_cutoff = _spoiler_cutoff(session, campaign.id, request, session_id)
         spoiler_map = _spoiler_map(session, campaign.id)
         entities = (
@@ -809,6 +835,7 @@ def list_entities(
                 "name": rename_map.get(e.id, e.canonical_name),
                 "type": e.entity_type,
                 "description": e.description,
+                "corrected": _has_correction(corrections, e.id, corrected_actions),
             }
             for e in entities
             if e.id not in hidden_ids and e.id not in merge_map
@@ -3034,6 +3061,20 @@ def list_campaign_threads(
         hidden_ids, merge_map, title_map, status_map, summary_map = _thread_correction_maps(
             corrections
         )
+        corrected_actions = {
+            "thread_status",
+            "thread_title",
+            "thread_summary",
+            "thread_merge",
+            "thread_hide",
+            "thread_rename",
+            "status_update",
+            "title_update",
+            "summary_update",
+            "merge",
+            "hide",
+            "rename",
+        }
         spoiler_cutoff = _spoiler_cutoff(session, campaign.id, request, session_id)
         spoiler_map = _spoiler_map(session, campaign.id)
 
@@ -3087,6 +3128,8 @@ def list_campaign_threads(
                 "kind": thread.kind,
                 "status": thread_status,
                 "summary": thread_summary,
+                "confidence": thread.confidence,
+                "corrected": _has_correction(corrections, thread.id, corrected_actions),
                 "session_id": thread.session_id,
                 "session_slug": sess.slug,
                 "session_number": sess.session_number,
@@ -3138,6 +3181,32 @@ def get_session_bundle(
         hidden_threads, merge_threads, title_map, status_map, summary_map = _thread_correction_maps(
             thread_corrections
         )
+        entity_corrected_actions = {
+            "entity_rename",
+            "entity_alias_add",
+            "entity_alias_remove",
+            "entity_merge",
+            "entity_hide",
+            "rename",
+            "alias_add",
+            "alias_remove",
+            "merge",
+            "hide",
+        }
+        thread_corrected_actions = {
+            "thread_status",
+            "thread_title",
+            "thread_summary",
+            "thread_merge",
+            "thread_hide",
+            "thread_rename",
+            "status_update",
+            "title_update",
+            "summary_update",
+            "merge",
+            "hide",
+            "rename",
+        }
         redacted_quotes = _redacted_ids(quote_corrections)
         redacted_utterances = _redacted_ids(utterance_corrections)
 
@@ -3407,6 +3476,7 @@ def get_session_bundle(
                     "summary": summary_map.get(t.id, t.summary),
                     "evidence": t.evidence,
                     "confidence": t.confidence,
+                    "corrected": _has_correction(thread_corrections, t.id, thread_corrected_actions),
                     "created_at": t.created_at.isoformat(),
                     "updates": updates_by_thread.get(t.id, []),
                 }
@@ -3423,6 +3493,7 @@ def get_session_bundle(
                     "name": rename_entities.get(e.id, e.canonical_name),
                     "type": e.entity_type,
                     "description": e.description,
+                    "corrected": _has_correction(entity_corrections, e.id, entity_corrected_actions),
                 }
                 for e in entities
                 if e.id not in hidden_entities and e.id not in merge_entities

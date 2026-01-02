@@ -763,6 +763,16 @@ button.danger {
   color: var(--gold-soft);
 }
 
+.tag.correction {
+  background: rgba(207, 174, 88, 0.35);
+  color: #1a1410;
+}
+
+.tag.confidence {
+  background: rgba(62, 111, 91, 0.3);
+  color: #d3efe0;
+}
+
 .event-type {
   display: inline-block;
   padding: 3px 8px;
