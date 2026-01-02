@@ -596,6 +596,43 @@ button.danger {
   background: rgba(207, 174, 88, 0.15);
 }
 
+.run-progress {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 0.82rem;
+}
+
+.run-progress .run-status {
+  color: var(--ink-muted);
+}
+
+.run-step {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(207, 174, 88, 0.2);
+  background: rgba(10, 12, 16, 0.6);
+}
+
+.run-step.running {
+  border-color: rgba(88, 151, 207, 0.7);
+  color: #a9d4ff;
+}
+
+.run-step.completed {
+  border-color: rgba(141, 198, 119, 0.6);
+  color: #c7f0b1;
+}
+
+.run-step.failed,
+.run-step.partial {
+  border-color: rgba(210, 92, 74, 0.7);
+  color: #f4a18c;
+}
+
 .artifact-links {
   display: flex;
   gap: 12px;

@@ -15,6 +15,7 @@ const state = {
   campaignEntities: [],
   transcriptLines: [],
   utteranceTimecodes: {},
+  runStatusTimer: null,
 };
 
 const elements = {
@@ -33,8 +34,10 @@ const elements = {
   statusLine: document.getElementById("statusLine"),
   sessionMeta: document.getElementById("sessionMeta"),
   runSelect: document.getElementById("runSelect"),
+  startRunButton: document.getElementById("startRunButton"),
   downloadSummary: document.getElementById("downloadSummary"),
   runMetrics: document.getElementById("runMetrics"),
+  runProgress: document.getElementById("runProgress"),
   summaryText: document.getElementById("summaryText"),
   qualityMetrics: document.getElementById("qualityMetrics"),
   runDiagnostics: document.getElementById("runDiagnostics"),
@@ -220,6 +223,35 @@ function renderMetrics(bundle) {
   });
 }
 
+function renderRunProgress(statusPayload) {
+  clearNode(elements.runProgress);
+  if (!statusPayload) {
+    return;
+  }
+  const header = document.createElement("div");
+  header.className = "run-status";
+  header.textContent = statusPayload.status
+    ? `Run status: ${statusPayload.status}`
+    : "Run status: n/a";
+  elements.runProgress.appendChild(header);
+
+  const steps = statusPayload.steps || [];
+  if (steps.length === 0) {
+    return;
+  }
+  steps.forEach((step) => {
+    const row = document.createElement("div");
+    row.className = `run-step ${step.status || ""}`;
+    const name = document.createElement("span");
+    name.textContent = step.name || "step";
+    const stateText = document.createElement("span");
+    stateText.textContent = step.status || "unknown";
+    row.appendChild(name);
+    row.appendChild(stateText);
+    elements.runProgress.appendChild(row);
+  });
+}
+
 function renderQuality(bundle) {
   clearNode(elements.qualityMetrics);
   if (!bundle || !bundle.quality) {
@@ -374,6 +406,57 @@ function renderDiagnostics(bundle) {
     empty.textContent = "No diagnostics available for this run.";
     elements.runDiagnostics.appendChild(empty);
   }
+}
+
+function stopRunStatusPolling() {
+  if (state.runStatusTimer) {
+    clearTimeout(state.runStatusTimer);
+    state.runStatusTimer = null;
+  }
+}
+
+async function pollRunStatus(sessionId, runId) {
+  if (!sessionId) return;
+  try {
+    const query = runId ? `?run_id=${runId}` : "";
+    const statusPayload = await fetchJson(`/sessions/${sessionId}/run-status${query}`);
+    renderRunProgress(statusPayload);
+    if (statusPayload && statusPayload.status === "running") {
+      state.runStatusTimer = setTimeout(() => pollRunStatus(sessionId, runId), 3000);
+      return;
+    }
+    if (
+      statusPayload &&
+      (statusPayload.status === "completed" || statusPayload.status === "partial")
+    ) {
+      await loadBundle(sessionId, runId, { skipStatusPolling: true });
+    }
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function startRunStatusPolling(sessionId, runId) {
+  stopRunStatusPolling();
+  pollRunStatus(sessionId, runId);
+}
+
+function canRunSession() {
+  return !state.authEnabled || state.userRole === "dm";
+}
+
+async function waitForLatestRun(sessionId, previousRunId, attempts = 10) {
+  for (let i = 0; i < attempts; i += 1) {
+    const runs = await fetchJson(`/sessions/${sessionId}/runs`);
+    if (runs && runs.length > 0) {
+      const latestId = runs[0].id;
+      if (!previousRunId || latestId !== previousRunId) {
+        return latestId;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return null;
 }
 
 function renderArtifacts(artifacts) {
@@ -852,6 +935,7 @@ function renderBundle(bundle) {
   state.transcriptLines = bundle.transcript?.lines || [];
   state.utteranceTimecodes = bundle.transcript?.utterance_timecodes || {};
   renderMetrics(bundle);
+  renderRunProgress(null);
   renderParagraphs(bundle.summary, bundle.run_status);
   renderQuality(bundle);
   renderDiagnostics(bundle);
@@ -1131,6 +1215,7 @@ async function loadSession(sessionId) {
     return;
   }
   state.selectedSession = sessionId;
+  updateRunControls();
   elements.sessionOnlyToggle.disabled = false;
   state.selectedRun = null;
   renderSessions();
@@ -1241,8 +1326,9 @@ function populateRunSelect(runs) {
     elements.runSelect.appendChild(option);
     return null;
   }
+  const running = runs.find((run) => run.status === "running");
   const completed = runs.find((run) => run.status === "completed");
-  const selectedId = completed ? completed.id : runs[0].id;
+  const selectedId = running ? running.id : completed ? completed.id : runs[0].id;
   runs.forEach((run, index) => {
     const option = document.createElement("option");
     option.value = run.id;
@@ -1256,7 +1342,8 @@ function populateRunSelect(runs) {
   return selectedId;
 }
 
-async function loadBundle(sessionId, runId) {
+async function loadBundle(sessionId, runId, options = {}) {
+  const skipStatusPolling = Boolean(options.skipStatusPolling);
   setStatus("Loading session bundle...");
   const query = runId ? `?run_id=${runId}` : "";
   const bundle = await fetchJson(`/sessions/${sessionId}/bundle${query}`);
@@ -1265,6 +1352,9 @@ async function loadBundle(sessionId, runId) {
   await loadNotesAndBookmarks();
   const runShort = bundle.run_id ? bundle.run_id.slice(0, 8) : "unknown";
   setStatus(`Session loaded. Run ${runShort}.`);
+  if (!skipStatusPolling) {
+    startRunStatusPolling(sessionId, runId || bundle.run_id);
+  }
 }
 
 function setUserId(value) {
@@ -1290,6 +1380,11 @@ function renderUserRole() {
   elements.userRole.textContent = `Role: ${state.userRole || "player"}`;
 }
 
+function updateRunControls() {
+  if (!elements.startRunButton) return;
+  elements.startRunButton.disabled = !canRunSession() || !state.selectedSession;
+}
+
 async function loadUserRole() {
   if (!state.selectedCampaign) return;
   try {
@@ -1297,10 +1392,12 @@ async function loadUserRole() {
     state.authEnabled = Boolean(data.auth_enabled);
     state.userRole = data.role || "player";
     renderUserRole();
+    updateRunControls();
   } catch (err) {
     state.authEnabled = true;
     state.userRole = "player";
     renderUserRole();
+    updateRunControls();
     setStatus("Set a user id to continue.");
   }
 }
@@ -2073,6 +2170,39 @@ async function init() {
   if (elements.createSessionButton) {
     elements.createSessionButton.addEventListener("click", async () => {
       await createSessionFromForm();
+    });
+  }
+  if (elements.startRunButton) {
+    elements.startRunButton.addEventListener("click", async () => {
+      if (!state.selectedSession) {
+        setStatus("Select a session before starting a run.");
+        return;
+      }
+      if (!canRunSession()) {
+        setStatus("DM access required to start a run.");
+        return;
+      }
+      const session = state.sessionMap[state.selectedSession];
+      if (!session) {
+        setStatus("Unable to find session.");
+        return;
+      }
+      setStatus("Starting run...");
+      try {
+        await postJson(
+          `/campaigns/${state.selectedCampaign}/sessions/${session.slug}/runs`,
+          {}
+        );
+        const runId = await waitForLatestRun(state.selectedSession, state.selectedRun);
+        if (runId) {
+          state.selectedRun = runId;
+          await loadSession(state.selectedSession);
+        }
+        setStatus("Run started.");
+      } catch (err) {
+        console.error(err);
+        setStatus("Failed to start run.");
+      }
     });
   }
   elements.runSelect.addEventListener("change", async (event) => {

@@ -7,6 +7,7 @@ from tests.factories import (
     create_entity,
     create_membership,
     create_run,
+    create_run_step,
     create_session,
     create_user,
 )
@@ -248,3 +249,24 @@ def test_admin_metrics_and_runs_require_dm(api_client, db_session, settings_over
     assert response.status_code == status.HTTP_200_OK
     runs = response.json()
     assert runs[0]["status"] == "partial"
+
+
+def test_run_status_endpoint(api_client, db_session, settings_overrides):
+    settings_overrides(auth_enabled=True)
+    campaign = create_campaign(db_session, slug="alpha")
+    dm_user = create_user(db_session, display_name="DM")
+    create_membership(db_session, campaign=campaign, user=dm_user, role="dm")
+    session_obj = create_session(db_session, campaign=campaign, slug="session_3")
+    run = create_run(db_session, campaign=campaign, session_obj=session_obj, status="running")
+    create_run_step(db_session, run=run, session_obj=session_obj, name="extract", status="running")
+    db_session.commit()
+
+    response = api_client.get(
+        f"/sessions/{session_obj.id}/run-status?run_id={run.id}",
+        headers=_auth_headers(dm_user.id),
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    payload = response.json()
+    assert payload["status"] == "running"
+    assert payload["steps"][0]["name"] == "extract"
