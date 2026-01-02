@@ -4,6 +4,7 @@ from temporalio import activity
 from sqlalchemy import func
 
 from dnd_summary.db import get_session
+from dnd_summary.corrections import EntityCorrectionState, load_entity_correction_state, normalize_key
 from dnd_summary.models import (
     Entity,
     EntityAlias,
@@ -21,23 +22,12 @@ from dnd_summary.models import (
 from dnd_summary.run_steps import run_step
 
 
-def _normalize_key(text: str) -> str:
-    return " ".join(text.lower().split())
-
-
-def _entity_name_map(session, campaign_id: str) -> dict[str, str]:
-    entities = session.query(Entity).filter_by(campaign_id=campaign_id).all()
-    entity_ids = [entity.id for entity in entities]
-    aliases = (
-        session.query(EntityAlias)
-        .filter(EntityAlias.entity_id.in_(entity_ids))
-        .all()
-    )
+def _entity_name_map_from_corrections(state: EntityCorrectionState) -> dict[str, str]:
     mapping: dict[str, str] = {}
-    for entity in entities:
-        mapping[_normalize_key(entity.canonical_name)] = entity.id
-    for alias in aliases:
-        mapping[_normalize_key(alias.alias)] = alias.entity_id
+    for key, entity_id in state.alias_to_id.items():
+        if entity_id in state.hidden_ids:
+            continue
+        mapping[key] = entity_id
     return mapping
 
 
@@ -71,7 +61,7 @@ def _entity_ids_from_evidence(evidence: list[dict] | None, lookup: dict[str, set
 def _normalize_entity_tokens(names: list[str] | None) -> list[str]:
     if not names:
         return []
-    return [_normalize_key(name) for name in names if name]
+    return [normalize_key(name) for name in names if name]
 
 
 @activity.defn
@@ -82,6 +72,9 @@ async def resolve_entities_activity(payload: dict) -> dict:
     with run_step(run_id, session_id, "resolve_entities"):
         with get_session() as session:
             run = session.query(Run).filter_by(id=run_id).one()
+            correction_state = load_entity_correction_state(
+                session, run.campaign_id, session_id
+            )
             mentions = (
                 session.query(Mention)
                 .filter_by(run_id=run_id, session_id=session_id)
@@ -92,16 +85,30 @@ async def resolve_entities_activity(payload: dict) -> dict:
             linked = 0
             aliases_added = 0
             for mention in mentions:
-                key = _normalize_key(mention.text)
-                entity = (
-                    session.query(Entity)
-                    .filter(
-                        Entity.campaign_id == run.campaign_id,
-                        Entity.entity_type == mention.entity_type,
-                        func.lower(Entity.canonical_name) == key,
+                key = normalize_key(mention.text)
+                if key in correction_state.hidden_names:
+                    continue
+                mapped_id = correction_state.alias_to_id.get(key)
+                entity = None
+                if mapped_id:
+                    resolved = correction_state.resolve_id(mapped_id)
+                    if resolved in correction_state.hidden_ids:
+                        continue
+                    entity = session.query(Entity).filter_by(id=resolved).one_or_none()
+                    if entity and mention.text.strip():
+                        mention.text = correction_state.canonical_name_by_id.get(
+                            entity.id, mention.text
+                        )
+                if not entity:
+                    entity = (
+                        session.query(Entity)
+                        .filter(
+                            Entity.campaign_id == run.campaign_id,
+                            Entity.entity_type == mention.entity_type,
+                            func.lower(Entity.canonical_name) == key,
+                        )
+                        .one_or_none()
                     )
-                    .one_or_none()
-                )
                 if not entity:
                     entity = Entity(
                         campaign_id=run.campaign_id,
@@ -136,7 +143,7 @@ async def resolve_entities_activity(payload: dict) -> dict:
             session.query(SceneEntity).filter_by(run_id=run_id, session_id=session_id).delete()
             session.query(ThreadEntity).filter_by(run_id=run_id, session_id=session_id).delete()
 
-            name_map = _entity_name_map(session, run.campaign_id)
+            name_map = _entity_name_map_from_corrections(correction_state)
             utterance_map = _utterance_to_entities(session, run_id, session_id)
 
             events = (

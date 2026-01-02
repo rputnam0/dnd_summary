@@ -8,6 +8,7 @@ from difflib import SequenceMatcher
 from sqlalchemy import func
 
 from dnd_summary.db import get_session
+from dnd_summary.corrections import load_thread_correction_state
 from dnd_summary.models import (
     CampaignThread,
     Event,
@@ -338,6 +339,8 @@ async def persist_session_facts_activity(payload: dict) -> dict:
                 utterance_lookup, utterances, facts
             )
 
+            thread_corrections = load_thread_correction_state(session, run.campaign_id, session_id)
+
             for model in (Mention, Scene, Event, Quote, Thread, ThreadUpdate):
                 session.query(model).filter_by(run_id=run_id, session_id=session_id).delete()
 
@@ -497,6 +500,22 @@ async def persist_session_facts_activity(payload: dict) -> dict:
                     evidence=[e.model_dump(mode="json") for e in thread.evidence],
                     confidence=thread.confidence,
                 )
+                if campaign_thread:
+                    resolved_id = thread_corrections.resolve_id(campaign_thread.id)
+                    if resolved_id in thread_corrections.hidden:
+                        continue
+                    overrides = thread_corrections.overrides.get(resolved_id, {})
+                    thread_row.campaign_thread_id = resolved_id
+                    if overrides.get("title"):
+                        thread_row.title = overrides["title"]
+                    if overrides.get("status"):
+                        thread_row.status = overrides["status"]
+                    if overrides.get("summary") is not None:
+                        thread_row.summary = overrides.get("summary")
+                    if overrides.get("status"):
+                        campaign_thread.status = overrides["status"]
+                    if overrides.get("summary") is not None:
+                        campaign_thread.summary = overrides.get("summary")
                 session.add(thread_row)
                 session.flush()
                 thread_rows.append(thread_row)

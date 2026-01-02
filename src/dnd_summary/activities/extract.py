@@ -11,6 +11,7 @@ from temporalio import activity
 
 from dnd_summary.config import settings
 from dnd_summary.db import get_session
+from dnd_summary.corrections import apply_entity_corrections, load_entity_correction_state
 from dnd_summary.llm import LLMClient
 from dnd_summary.llm_cache import (
     CacheRequiredError,
@@ -165,9 +166,27 @@ async def extract_session_facts_activity(payload: dict) -> dict:
                 }
             )
             base_usage["speaker_count"] = len(speakers)
+            correction_state = load_entity_correction_state(
+                session, run.campaign_id, session_id
+            )
+            canonical_entities = sorted(
+                {
+                    name
+                    for entity_id, name in correction_state.canonical_name_by_id.items()
+                    if entity_id not in correction_state.hidden_ids
+                }
+            )
+            alias_map = {
+                alias: correction_state.name_to_canonical[alias]
+                for alias in sorted(correction_state.name_to_canonical.keys())
+                if alias not in correction_state.hidden_names
+            }
             prompt = prompt_template.format(
                 character_map=json.dumps(character_map, sort_keys=True),
                 speakers=json.dumps(speakers, sort_keys=True),
+                canonical_entities=json.dumps(canonical_entities, sort_keys=True),
+                alias_map=json.dumps(alias_map, sort_keys=True),
+                hidden_entities=json.dumps(sorted(correction_state.hidden_names), sort_keys=True),
                 transcript_block=transcript_block,
             )
             prompt_stats = build_text_metrics("prompt", prompt)
@@ -269,6 +288,7 @@ async def extract_session_facts_activity(payload: dict) -> dict:
             facts = SessionFacts.model_validate(payload_json)
             map_session_facts_utterance_ids(facts, utterance_id_map)
             _ensure_pc_mentions(facts, utterances, character_map)
+            apply_entity_corrections(facts, correction_state)
 
             if len(facts.quotes) < settings.min_quotes * 2:
                 quote_prompt_template = _load_prompt("extract_quotes_v1.txt")

@@ -5,13 +5,15 @@ import asyncio
 from dnd_summary.activities.resolve import (
     _entity_ids_from_evidence,
     _normalize_entity_tokens,
-    _normalize_key,
     resolve_entities_activity,
 )
-from dnd_summary.models import Entity, EntityMention, EventEntity, SceneEntity, ThreadEntity
+from dnd_summary.corrections import normalize_key
+from dnd_summary.models import Correction, Entity, EntityMention, EventEntity, SceneEntity, ThreadEntity
 from tests.factories import (
     create_campaign,
     create_event,
+    create_entity,
+    create_entity_alias,
     create_mention,
     create_run,
     create_scene,
@@ -22,7 +24,7 @@ from tests.factories import (
 
 
 def test_normalize_key_trims_spaces():
-    assert _normalize_key("  Goblin King ") == "goblin king"
+    assert normalize_key("  Goblin King ") == "goblin king"
 
 
 def test_entity_ids_from_evidence_collects_ids():
@@ -73,3 +75,48 @@ def test_resolve_entities_activity_links_entities(db_session):
     assert db_session.query(EventEntity).count() >= 1
     assert db_session.query(SceneEntity).count() >= 1
     assert db_session.query(ThreadEntity).count() >= 1
+
+
+def test_resolve_entities_applies_corrections(db_session):
+    campaign = create_campaign(db_session)
+    session_obj = create_session(db_session, campaign=campaign)
+    run = create_run(db_session, campaign=campaign, session_obj=session_obj)
+    entity = create_entity(db_session, campaign=campaign, name="Alyx", entity_type="character")
+    create_entity_alias(db_session, entity=entity, alias="Alix")
+    db_session.add(
+        Correction(
+            campaign_id=campaign.id,
+            session_id=None,
+            target_type="entity",
+            target_id=entity.id,
+            action="entity_rename",
+            payload={"name": "Alyxandra"},
+            created_by="dm",
+        )
+    )
+    hidden = create_entity(db_session, campaign=campaign, name="Secret", entity_type="character")
+    db_session.add(
+        Correction(
+            campaign_id=campaign.id,
+            session_id=None,
+            target_type="entity",
+            target_id=hidden.id,
+            action="entity_hide",
+            payload={},
+            created_by="dm",
+        )
+    )
+    evidence = [{"utterance_id": "utt-1"}]
+    create_mention(db_session, run=run, session_obj=session_obj, text="Alix", evidence=evidence)
+    create_mention(db_session, run=run, session_obj=session_obj, text="Secret", evidence=evidence)
+    db_session.commit()
+
+    result = asyncio.run(resolve_entities_activity({"run_id": run.id, "session_id": session_obj.id}))
+
+    assert result["entities_created"] == 0
+    mentions = db_session.query(EntityMention).all()
+    assert len(mentions) == 1
+    mention = db_session.query(EntityMention).first()
+    assert mention.entity_id == entity.id
+    updated = db_session.query(Entity).filter_by(id=entity.id).one()
+    assert updated.canonical_name == "Alyx"
