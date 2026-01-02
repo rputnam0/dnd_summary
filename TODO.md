@@ -7,27 +7,24 @@ Definition of Done (all must pass):
 - Manual UI smoke checks recorded (run start/progress, current run persistence, evidence links).
 
 Commit-sized TODO (in order):
-1) Persist current run selection from UI
-   - Acceptance: selecting a run updates `sessions.current_run_id` and survives reload.
-   - Tests: update/add API test for `PUT /sessions/{id}/current-run`.
-2) Data lifecycle controls in UI (export/delete)
+1) Data lifecycle controls in UI (export/delete)
    - Acceptance: DM can export session data and delete a session from the UI.
    - Tests: API tests for export/delete if missing; verify session is removed from lists.
-3) Trust + provenance signals in UI
+2) Trust + provenance signals in UI
    - Acceptance: show confidence where available and add a correction badge when DM-approved.
    - Tests: UI smoke check; add a lightweight API snapshot test if practical.
-4) Corrections inform extraction/resolve
+3) Corrections inform extraction/resolve
    - Acceptance: corrections project into a canonical map used by extraction/resolution and summary inputs.
    - Acceptance: hidden/merged/renamed entities and thread status changes are honored in reruns.
    - Spec: see `docs/CORRECTIONS.md`.
    - Tests: add activity tests that inject corrections and assert outputs.
-5) Summary variants + artifact switcher in UI
+4) Summary variants + artifact switcher in UI
    - Acceptance: DM can toggle and download player/DM/hooks/NPC artifacts.
    - Tests: UI smoke check + API test for artifacts payload if needed.
-6) Ask the campaign panel in UI
+5) Ask the campaign panel in UI
    - Acceptance: DM/player can submit a question and see evidence-cited answers.
    - Tests: API tests for `/ask` already exist or are added as needed.
-7) User testing round 1
+6) User testing round 1
    - Acceptance: 5 DMs + 5 players complete `docs/USER_TESTING.md` task script; findings logged with fixes ranked.
 
 MVP verification checklist (record results in the PRD or a release note):
@@ -67,6 +64,7 @@ Start after MVP close-out is complete. Each item is a PR-sized batch with clear 
 
 
 ## Recently completed
+- Persist current run selection from UI (set current run + API tests)
 - UI run controls + progress feed (start run + polling via run-status endpoint)
 - UI session onboarding + transcript upload (session creation API, UI form, and tests)
 - Entity-centric API endpoints (`/entities/{entity_id}/mentions|quotes|events`)

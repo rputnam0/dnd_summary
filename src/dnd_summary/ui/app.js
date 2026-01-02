@@ -147,6 +147,25 @@ async function postJson(path, payload) {
   return response.json();
 }
 
+async function putJson(path, payload) {
+  const headers = {
+    "Content-Type": "application/json",
+  };
+  if (state.currentUserId) {
+    headers["X-User-Id"] = state.currentUserId;
+  }
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
 async function uploadTranscript(campaignSlug, sessionSlug, file) {
   const headers = {};
   if (state.currentUserId) {
@@ -443,6 +462,28 @@ function startRunStatusPolling(sessionId, runId) {
 
 function canRunSession() {
   return !state.authEnabled || state.userRole === "dm";
+}
+
+async function setCurrentRun(sessionId, runId) {
+  if (!sessionId || !runId || !canRunSession()) {
+    return null;
+  }
+  const headers = {};
+  if (state.currentUserId) {
+    headers["X-User-Id"] = state.currentUserId;
+  }
+  const response = await fetch(
+    `${API_BASE}/sessions/${sessionId}/current-run?run_id=${encodeURIComponent(runId)}`,
+    {
+      method: "PUT",
+      headers,
+    }
+  );
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed: ${response.status}`);
+  }
+  return response.json();
 }
 
 async function waitForLatestRun(sessionId, previousRunId, attempts = 10) {
@@ -1326,16 +1367,24 @@ function populateRunSelect(runs) {
     elements.runSelect.appendChild(option);
     return null;
   }
+  const current = runs.find((run) => run.is_current);
   const running = runs.find((run) => run.status === "running");
   const completed = runs.find((run) => run.status === "completed");
-  const selectedId = running ? running.id : completed ? completed.id : runs[0].id;
+  const selectedId = current
+    ? current.id
+    : running
+    ? running.id
+    : completed
+    ? completed.id
+    : runs[0].id;
   runs.forEach((run, index) => {
     const option = document.createElement("option");
     option.value = run.id;
     const created = new Date(run.created_at).toLocaleString();
     const label = index === 0 ? "Latest" : "Run";
     const status = run.status || "unknown";
-    option.textContent = `${label} • ${status} • ${created}`;
+    const currentTag = run.is_current ? " • current" : "";
+    option.textContent = `${label} • ${status} • ${created}${currentTag}`;
     elements.runSelect.appendChild(option);
   });
   elements.runSelect.value = selectedId;
@@ -2196,6 +2245,7 @@ async function init() {
         const runId = await waitForLatestRun(state.selectedSession, state.selectedRun);
         if (runId) {
           state.selectedRun = runId;
+          await setCurrentRun(state.selectedSession, runId);
           await loadSession(state.selectedSession);
         }
         setStatus("Run started.");
@@ -2209,6 +2259,14 @@ async function init() {
     const runId = event.target.value;
     state.selectedRun = runId;
     if (state.selectedSession) {
+      if (canRunSession() && runId) {
+        try {
+          await setCurrentRun(state.selectedSession, runId);
+        } catch (err) {
+          console.error(err);
+          setStatus("Failed to set current run.");
+        }
+      }
       await loadBundle(state.selectedSession, runId);
     }
   });

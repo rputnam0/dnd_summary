@@ -2821,7 +2821,7 @@ def export_session(session_id: str, request: Request) -> FileResponse:
 @app.get("/sessions/{session_id}/runs")
 def list_runs(session_id: str, request: Request) -> list[dict]:
     with get_session() as session:
-        _session_for_id(session, session_id, request)
+        session_obj = _session_for_id(session, session_id, request)
         runs = (
             session.query(Run)
             .filter_by(session_id=session_id)
@@ -2835,6 +2835,7 @@ def list_runs(session_id: str, request: Request) -> list[dict]:
                 "pipeline_version": run.pipeline_version,
                 "status": run.status,
                 "created_at": run.created_at.isoformat(),
+                "is_current": run.id == session_obj.current_run_id,
             }
             for run in runs
         ]
