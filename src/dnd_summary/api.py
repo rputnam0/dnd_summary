@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from pathlib import Path
 from typing import Annotated
 
@@ -800,10 +801,11 @@ async def start_session_run(campaign_slug: str, session_slug: str, request: Requ
         settings.temporal_address,
         namespace=settings.temporal_namespace,
     )
+    workflow_id = f"process-session:{campaign_slug}:{session_slug}:{uuid.uuid4().hex}"
     handle = await client.start_workflow(
         ProcessSessionWorkflow.run,
         {"campaign_slug": campaign_slug, "session_slug": session_slug},
-        id=f"process-session:{campaign_slug}:{session_slug}",
+        id=workflow_id,
         task_queue=settings.temporal_task_queue,
     )
     return {"workflow_id": handle.id, "run_id": handle.run_id}

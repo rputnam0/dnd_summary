@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from datetime import datetime, timezone
 
 import typer
@@ -42,10 +43,11 @@ def run_session(campaign_slug: str, session_slug: str) -> None:
             settings.temporal_address,
             namespace=settings.temporal_namespace,
         )
+        workflow_id = f"process-session:{campaign_slug}:{session_slug}:{uuid.uuid4().hex}"
         handle = await client.start_workflow(
             ProcessSessionWorkflow.run,
             {"campaign_slug": campaign_slug, "session_slug": session_slug},
-            id=f"process-session:{campaign_slug}:{session_slug}",
+            id=workflow_id,
             task_queue=settings.temporal_task_queue,
         )
         typer.echo(f"Started workflow: {handle.id} / {handle.run_id}")
