@@ -1,5 +1,21 @@
 const API_BASE = "";
 
+const SUMMARY_VARIANT_ORDER = [
+  "summary_text",
+  "summary_player",
+  "summary_dm",
+  "summary_hooks",
+  "summary_npc_changes",
+];
+
+const SUMMARY_VARIANT_LABELS = {
+  summary_text: "Main Summary",
+  summary_player: "Player Recap",
+  summary_dm: "DM Prep",
+  summary_hooks: "Next Session Hooks",
+  summary_npc_changes: "NPC Changes",
+};
+
 const state = {
   campaigns: [],
   sessions: [],
@@ -16,6 +32,8 @@ const state = {
   transcriptLines: [],
   utteranceTimecodes: {},
   runStatusTimer: null,
+  summaryVariant: "summary_text",
+  summaryFormat: "docx",
 };
 
 const elements = {
@@ -34,6 +52,8 @@ const elements = {
   statusLine: document.getElementById("statusLine"),
   sessionMeta: document.getElementById("sessionMeta"),
   runSelect: document.getElementById("runSelect"),
+  summaryVariant: document.getElementById("summaryVariant"),
+  summaryFormat: document.getElementById("summaryFormat"),
   startRunButton: document.getElementById("startRunButton"),
   downloadSummary: document.getElementById("downloadSummary"),
   exportSession: document.getElementById("exportSession"),
@@ -196,6 +216,52 @@ function clearNode(node) {
   }
 }
 
+function summaryVariantLabel(variant) {
+  return SUMMARY_VARIANT_LABELS[variant] || variant.replace(/_/g, " ");
+}
+
+function summaryVariantSlug(variant) {
+  if (variant === "summary_text") {
+    return "summary";
+  }
+  return variant.replace(/^summary_/, "");
+}
+
+function summaryTextForVariant(bundle, variant) {
+  if (!bundle) return "";
+  if (bundle.summary_variants && bundle.summary_variants[variant]) {
+    return bundle.summary_variants[variant];
+  }
+  if (variant === "summary_text") {
+    return bundle.summary || "";
+  }
+  return "";
+}
+
+function availableSummaryVariants(bundle) {
+  if (!bundle) return [];
+  const variants = bundle.summary_variants ? Object.keys(bundle.summary_variants) : [];
+  if (variants.length > 0) {
+    return SUMMARY_VARIANT_ORDER.filter((variant) => variants.includes(variant));
+  }
+  if (bundle.summary || (bundle.run_status && bundle.run_status !== "completed")) {
+    return ["summary_text"];
+  }
+  return [];
+}
+
+function artifactLabel(kind) {
+  const match = kind.match(/^(summary(?:_[a-z_]+)?)[_](docx|txt)$/);
+  if (match) {
+    const prefix = match[1];
+    const format = match[2].toUpperCase();
+    const variant =
+      prefix === "summary" ? "summary_text" : prefix.replace(/^summary_/, "summary_");
+    return `${summaryVariantLabel(variant)} (${format})`;
+  }
+  return kind.replace(/_/g, " ");
+}
+
 function renderParagraphs(text, runStatus) {
   clearNode(elements.summaryText);
   if (!text) {
@@ -223,6 +289,35 @@ function renderParagraphs(text, runStatus) {
       p.textContent = part.trim();
       elements.summaryText.appendChild(p);
     });
+}
+
+function renderSummary(bundle) {
+  const variant = state.summaryVariant || "summary_text";
+  const text = summaryTextForVariant(bundle, variant);
+  renderParagraphs(text, bundle ? bundle.run_status : null);
+}
+
+function updateSummaryVariantOptions(bundle) {
+  const select = elements.summaryVariant;
+  if (!select) return;
+  const variants = availableSummaryVariants(bundle);
+  clearNode(select);
+  if (variants.length === 0) {
+    select.disabled = true;
+    state.summaryVariant = "summary_text";
+    return;
+  }
+  variants.forEach((variant) => {
+    const option = document.createElement("option");
+    option.value = variant;
+    option.textContent = summaryVariantLabel(variant);
+    select.appendChild(option);
+  });
+  if (!variants.includes(state.summaryVariant)) {
+    state.summaryVariant = variants[0];
+  }
+  select.value = state.summaryVariant;
+  select.disabled = false;
 }
 
 function renderMetrics(bundle) {
@@ -552,7 +647,7 @@ function renderArtifacts(artifacts) {
   artifacts.forEach((artifact) => {
     const link = document.createElement("a");
     link.href = `/artifacts/${artifact.id}`;
-    link.textContent = `${artifact.kind.replace(/_/g, " ")}`;
+    link.textContent = artifactLabel(artifact.kind);
     link.target = "_blank";
     elements.artifactLinks.appendChild(link);
   });
@@ -1083,9 +1178,10 @@ function renderBundle(bundle) {
   }
   state.transcriptLines = bundle.transcript?.lines || [];
   state.utteranceTimecodes = bundle.transcript?.utterance_timecodes || {};
+  updateSummaryVariantOptions(bundle);
   renderMetrics(bundle);
   renderRunProgress(null);
-  renderParagraphs(bundle.summary, bundle.run_status);
+  renderSummary(bundle);
   renderQuality(bundle);
   renderDiagnostics(bundle);
   updateDownload(bundle);
@@ -1101,7 +1197,8 @@ function renderBundle(bundle) {
 
 function updateDownload(bundle) {
   const button = elements.downloadSummary;
-  if (!button) return;
+  const formatSelect = elements.summaryFormat;
+  if (!button || !formatSelect) return;
   button.disabled = true;
   button.dataset.mode = "";
   button.dataset.href = "";
@@ -1109,38 +1206,65 @@ function updateDownload(bundle) {
 
   if (!bundle) {
     button.textContent = "Download Summary";
+    formatSelect.disabled = true;
+    clearNode(formatSelect);
     return;
   }
 
+  const variant = state.summaryVariant || "summary_text";
   const artifacts = bundle.artifacts || [];
-  const docx = artifacts.find((item) => item.kind === "summary_docx");
-  const txt = artifacts.find((item) => item.kind === "summary_txt");
+  const prefix = variant === "summary_text" ? "summary" : variant;
+  const docx = artifacts.find((item) => item.kind === `${prefix}_docx`);
+  const txt = artifacts.find((item) => item.kind === `${prefix}_txt`);
+  const inlineText = summaryTextForVariant(bundle, variant);
+  const session = state.sessionMap[state.selectedSession] || {};
+  const slug = session.slug || "summary";
+  const variantSlug = summaryVariantSlug(variant);
+
+  const options = [];
   if (docx) {
-    button.textContent = "Download DOCX";
-    button.dataset.mode = "artifact";
-    button.dataset.href = `/artifacts/${docx.id}`;
-    button.dataset.filename = "summary.docx";
-    button.disabled = false;
-    return;
+    options.push({ value: "docx", label: "DOCX", artifact: docx, ext: "docx" });
   }
   if (txt) {
+    options.push({ value: "txt", label: "TXT", artifact: txt, ext: "txt" });
+  }
+  if (inlineText) {
+    options.push({ value: "inline", label: "Inline", ext: "txt" });
+  }
+
+  clearNode(formatSelect);
+  if (options.length === 0) {
+    formatSelect.disabled = true;
+    button.textContent = "Download Summary";
+    return;
+  }
+
+  options.forEach((option) => {
+    const optionEl = document.createElement("option");
+    optionEl.value = option.value;
+    optionEl.textContent = option.label;
+    formatSelect.appendChild(optionEl);
+  });
+  formatSelect.disabled = false;
+
+  const selected =
+    options.find((option) => option.value === state.summaryFormat) || options[0];
+  state.summaryFormat = selected.value;
+  formatSelect.value = selected.value;
+
+  const filename = `${slug}.${variantSlug}.${selected.ext}`;
+  if (selected.value === "inline") {
     button.textContent = "Download TXT";
-    button.dataset.mode = "artifact";
-    button.dataset.href = `/artifacts/${txt.id}`;
-    button.dataset.filename = "summary.txt";
+    button.dataset.mode = "inline";
+    button.dataset.filename = filename;
     button.disabled = false;
     return;
   }
-  if (bundle.summary) {
-    const session = state.sessionMap[state.selectedSession] || {};
-    const slug = session.slug || "summary";
-    button.textContent = "Download TXT";
-    button.dataset.mode = "inline";
-    button.dataset.filename = `${slug}.summary.txt`;
-    button.disabled = false;
-  } else {
-    button.textContent = "Download Summary";
-  }
+  button.textContent = `Download ${selected.label}`;
+  button.dataset.mode = "artifact";
+  button.dataset.href = `/artifacts/${selected.artifact.id}`;
+  button.dataset.filename = filename;
+  button.disabled = false;
 }
 
 async function loadCampaigns() {
@@ -2385,6 +2509,19 @@ async function init() {
       await loadBundle(state.selectedSession, runId);
     }
   });
+  if (elements.summaryVariant) {
+    elements.summaryVariant.addEventListener("change", (event) => {
+      state.summaryVariant = event.target.value;
+      renderSummary(state.bundle);
+      updateDownload(state.bundle);
+    });
+  }
+  if (elements.summaryFormat) {
+    elements.summaryFormat.addEventListener("change", (event) => {
+      state.summaryFormat = event.target.value;
+      updateDownload(state.bundle);
+    });
+  }
   if (elements.exportSession) {
     elements.exportSession.addEventListener("click", async () => {
       if (!state.selectedSession) {

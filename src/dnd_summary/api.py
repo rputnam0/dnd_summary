@@ -3210,12 +3210,34 @@ def get_session_bundle(
         redacted_quotes = _redacted_ids(quote_corrections)
         redacted_utterances = _redacted_ids(utterance_corrections)
 
-        summary = (
+        summary_kinds = {
+            "summary_text",
+            "summary_player",
+            "summary_dm",
+            "summary_hooks",
+            "summary_npc_changes",
+        }
+        summaries = (
             session.query(SessionExtraction)
-            .filter_by(session_id=session_id, run_id=resolved_run_id, kind="summary_text")
+            .filter(
+                SessionExtraction.session_id == session_id,
+                SessionExtraction.run_id == resolved_run_id,
+                SessionExtraction.kind.in_(summary_kinds),
+            )
             .order_by(SessionExtraction.created_at.desc())
-            .first()
+            .all()
         )
+        summary_by_kind: dict[str, SessionExtraction] = {}
+        for record in summaries:
+            if record.kind in summary_by_kind:
+                continue
+            summary_by_kind[record.kind] = record
+        summary_text_record = summary_by_kind.get("summary_text")
+        summary_variants = {
+            kind: record.payload.get("text", "")
+            for kind, record in summary_by_kind.items()
+            if record.payload
+        }
         persist_metrics = (
             session.query(SessionExtraction)
             .filter_by(session_id=session_id, run_id=resolved_run_id, kind="persist_metrics")
@@ -3343,7 +3365,8 @@ def get_session_bundle(
             "run_id": resolved_run_id,
             "run_status": run.status if run else None,
             "run_created_at": run.created_at.isoformat() if run else None,
-            "summary": summary.payload.get("text", "") if summary else "",
+            "summary": summary_text_record.payload.get("text", "") if summary_text_record else "",
+            "summary_variants": summary_variants,
             "metrics": persist_metrics.payload if persist_metrics else None,
             "quality": quality_report.payload if quality_report else None,
             "llm_calls": [
