@@ -26,6 +26,7 @@ Commit-sized TODO (in order):
 6) Corrections inform extraction/resolve
    - Acceptance: corrections project into a canonical map used by extraction/resolution and summary inputs.
    - Acceptance: hidden/merged/renamed entities and thread status changes are honored in reruns.
+   - Spec: see `docs/CORRECTIONS.md`.
    - Tests: add activity tests that inject corrections and assert outputs.
 7) Summary variants + artifact switcher in UI
    - Acceptance: DM can toggle and download player/DM/hooks/NPC artifacts.
