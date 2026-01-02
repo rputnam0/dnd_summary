@@ -35,6 +35,8 @@ evidence, and role gating behave as expected.
 - Evidence links are trusted and accurate (no broken or mismatched spans).
 
 ## Logging Template
+Record findings in `docs/USER_TESTING_RESULTS.md`.
+
 Participant ID:
 Role: DM | Player
 Session ID:
