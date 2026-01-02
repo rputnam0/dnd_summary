@@ -36,6 +36,8 @@ const elements = {
   runSelect: document.getElementById("runSelect"),
   startRunButton: document.getElementById("startRunButton"),
   downloadSummary: document.getElementById("downloadSummary"),
+  exportSession: document.getElementById("exportSession"),
+  deleteSession: document.getElementById("deleteSession"),
   runMetrics: document.getElementById("runMetrics"),
   runProgress: document.getElementById("runProgress"),
   summaryText: document.getElementById("summaryText"),
@@ -482,6 +484,48 @@ async function setCurrentRun(sessionId, runId) {
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+async function exportSession(sessionId) {
+  if (!sessionId) return;
+  const headers = {};
+  if (state.currentUserId) {
+    headers["X-User-Id"] = state.currentUserId;
+  }
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}/export`, {
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Export failed: ${response.status}`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `session_${sessionId}_export.zip`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function deleteSession(sessionId) {
+  if (!sessionId) return;
+  const headers = {};
+  if (state.currentUserId) {
+    headers["X-User-Id"] = state.currentUserId;
+  }
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}`, {
+    method: "DELETE",
+    headers,
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Delete failed: ${response.status}`);
   }
   return response.json();
 }
@@ -1431,7 +1475,14 @@ function renderUserRole() {
 
 function updateRunControls() {
   if (!elements.startRunButton) return;
-  elements.startRunButton.disabled = !canRunSession() || !state.selectedSession;
+  const enabled = canRunSession() && Boolean(state.selectedSession);
+  elements.startRunButton.disabled = !enabled;
+  if (elements.exportSession) {
+    elements.exportSession.disabled = !enabled;
+  }
+  if (elements.deleteSession) {
+    elements.deleteSession.disabled = !enabled;
+  }
 }
 
 async function loadUserRole() {
@@ -2270,6 +2321,55 @@ async function init() {
       await loadBundle(state.selectedSession, runId);
     }
   });
+  if (elements.exportSession) {
+    elements.exportSession.addEventListener("click", async () => {
+      if (!state.selectedSession) {
+        setStatus("Select a session before exporting.");
+        return;
+      }
+      if (!canRunSession()) {
+        setStatus("DM access required to export.");
+        return;
+      }
+      setStatus("Exporting session...");
+      try {
+        await exportSession(state.selectedSession);
+        setStatus("Export complete.");
+      } catch (err) {
+        console.error(err);
+        setStatus("Failed to export session.");
+      }
+    });
+  }
+  if (elements.deleteSession) {
+    elements.deleteSession.addEventListener("click", async () => {
+      if (!state.selectedSession) {
+        setStatus("Select a session before deleting.");
+        return;
+      }
+      if (!canRunSession()) {
+        setStatus("DM access required to delete.");
+        return;
+      }
+      if (!confirm("Delete this session and all derived data?")) {
+        return;
+      }
+      setStatus("Deleting session...");
+      try {
+        await deleteSession(state.selectedSession);
+        state.selectedSession = null;
+        state.selectedRun = null;
+        renderSessionMeta(null);
+        clearNode(elements.runSelect);
+        renderRunProgress(null);
+        setStatus("Session deleted.");
+        await loadSessions();
+      } catch (err) {
+        console.error(err);
+        setStatus("Failed to delete session.");
+      }
+    });
+  }
   elements.downloadSummary.addEventListener("click", () => {
     const mode = elements.downloadSummary.dataset.mode;
     if (!mode || elements.downloadSummary.disabled) {

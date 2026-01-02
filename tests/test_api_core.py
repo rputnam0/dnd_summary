@@ -305,3 +305,40 @@ def test_set_current_run(api_client, db_session, settings_overrides):
     runs = response.json()
     assert runs[0]["id"] == run.id
     assert runs[0]["is_current"] is True
+
+
+def test_export_and_delete_session(api_client, db_session, settings_overrides, tmp_path):
+    settings_overrides(auth_enabled=True, artifacts_root=str(tmp_path))
+    campaign = create_campaign(db_session, slug="alpha")
+    dm_user = create_user(db_session, display_name="DM")
+    player = create_user(db_session, display_name="Player")
+    create_membership(db_session, campaign=campaign, user=dm_user, role="dm")
+    create_membership(db_session, campaign=campaign, user=player, role="player")
+    session_obj = create_session(db_session, campaign=campaign, slug="session_5")
+    create_run(db_session, campaign=campaign, session_obj=session_obj, status="completed")
+    db_session.commit()
+
+    response = api_client.get(
+        f"/sessions/{session_obj.id}/export",
+        headers=_auth_headers(player.id),
+    )
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    response = api_client.get(
+        f"/sessions/{session_obj.id}/export",
+        headers=_auth_headers(dm_user.id),
+    )
+    assert response.status_code == status.HTTP_200_OK
+    assert response.headers["content-type"] == "application/zip"
+
+    response = api_client.delete(
+        f"/sessions/{session_obj.id}",
+        headers=_auth_headers(player.id),
+    )
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    response = api_client.delete(
+        f"/sessions/{session_obj.id}",
+        headers=_auth_headers(dm_user.id),
+    )
+    assert response.status_code == status.HTTP_200_OK
