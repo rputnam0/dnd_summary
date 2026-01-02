@@ -58,6 +58,20 @@
             <h2>Sessions</h2>
             <span id="sessionCount" class="count-pill">0</span>
           </div>
+          <div class="session-create">
+            <h3>New Session</h3>
+            <label for="newSessionSlug">Slug</label>
+            <input id="newSessionSlug" type="text" placeholder="session_12" />
+            <label for="newSessionTitle">Title</label>
+            <input id="newSessionTitle" type="text" placeholder="Session title" />
+            <label for="newSessionDate">Date</label>
+            <input id="newSessionDate" type="date" />
+            <label for="newSessionNumber">Number (optional)</label>
+            <input id="newSessionNumber" type="number" min="1" />
+            <label for="newSessionFile">Transcript (optional)</label>
+            <input id="newSessionFile" type="file" accept=".txt,.jsonl,.srt" />
+            <button id="createSessionButton" type="button">Create session</button>
+          </div>
           <div id="sessionList" class="session-list"></div>
         </aside>
 

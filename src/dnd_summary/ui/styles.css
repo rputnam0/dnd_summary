@@ -288,6 +288,40 @@ button.danger {
   gap: 10px;
 }
 
+.session-create {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-family: "Source Sans 3", sans-serif;
+}
+
+.session-create h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-family: "Cinzel", serif;
+}
+
+.session-create label {
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+}
+
+.session-create input[type="text"],
+.session-create input[type="date"],
+.session-create input[type="number"],
+.session-create input[type="file"] {
+  border: 1px solid rgba(207, 174, 88, 0.35);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(8, 10, 12, 0.6);
+  color: var(--ink);
+  font-family: "Source Sans 3", sans-serif;
+}
+
+.session-create input[type="file"] {
+  padding: 6px 8px;
+}
+
 .session-card {
   background: rgba(9, 10, 12, 0.6);
   border: 1px solid rgba(207, 174, 88, 0.2);

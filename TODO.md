@@ -7,34 +7,30 @@ Definition of Done (all must pass):
 - Manual UI smoke checks recorded (run start/progress, current run persistence, evidence links).
 
 Commit-sized TODO (in order):
-1) UI session onboarding + transcript upload
-   - Acceptance: DM can create a new session (slug + title/date required) and upload a transcript.
-   - Notes: add API endpoint to create sessions with required metadata.
-   - Tests: add API tests for session creation + transcript upload if missing; run `uv run pytest`.
-2) UI run controls + progress feed
+1) UI run controls + progress feed
    - Acceptance: DM can start a run, see step progress via polling, and view completion state.
    - Tests: add API tests for run status feed if missing.
-3) Persist current run selection from UI
+2) Persist current run selection from UI
    - Acceptance: selecting a run updates `sessions.current_run_id` and survives reload.
    - Tests: update/add API test for `PUT /sessions/{id}/current-run`.
-4) Data lifecycle controls in UI (export/delete)
+3) Data lifecycle controls in UI (export/delete)
    - Acceptance: DM can export session data and delete a session from the UI.
    - Tests: API tests for export/delete if missing; verify session is removed from lists.
-5) Trust + provenance signals in UI
+4) Trust + provenance signals in UI
    - Acceptance: show confidence where available and add a correction badge when DM-approved.
    - Tests: UI smoke check; add a lightweight API snapshot test if practical.
-6) Corrections inform extraction/resolve
+5) Corrections inform extraction/resolve
    - Acceptance: corrections project into a canonical map used by extraction/resolution and summary inputs.
    - Acceptance: hidden/merged/renamed entities and thread status changes are honored in reruns.
    - Spec: see `docs/CORRECTIONS.md`.
    - Tests: add activity tests that inject corrections and assert outputs.
-7) Summary variants + artifact switcher in UI
+6) Summary variants + artifact switcher in UI
    - Acceptance: DM can toggle and download player/DM/hooks/NPC artifacts.
    - Tests: UI smoke check + API test for artifacts payload if needed.
-8) Ask the campaign panel in UI
+7) Ask the campaign panel in UI
    - Acceptance: DM/player can submit a question and see evidence-cited answers.
    - Tests: API tests for `/ask` already exist or are added as needed.
-9) User testing round 1
+8) User testing round 1
    - Acceptance: 5 DMs + 5 players complete `docs/USER_TESTING.md` task script; findings logged with fixes ranked.
 
 MVP verification checklist (record results in the PRD or a release note):
@@ -74,6 +70,7 @@ Start after MVP close-out is complete. Each item is a PR-sized batch with clear 
 
 
 ## Recently completed
+- UI session onboarding + transcript upload (session creation API, UI form, and tests)
 - Entity-centric API endpoints (`/entities/{entity_id}/mentions|quotes|events`)
 - Session bundle endpoint (`/sessions/{session_id}/bundle`) for UI call reduction
 - Quote clean_text support with display_text for UI

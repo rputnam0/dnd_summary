@@ -4,6 +4,7 @@ import json
 import re
 import uuid
 from pathlib import Path
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
@@ -64,6 +65,12 @@ if UI_ROOT.exists():
 def _validate_slug(value: str, label: str) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", value):
         raise HTTPException(status_code=400, detail=f"Invalid {label} slug")
+
+
+def _parse_iso_datetime(value: str) -> datetime:
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    return datetime.fromisoformat(value)
 
 
 def _load_corrections(
@@ -654,6 +661,63 @@ def list_sessions(campaign_slug: str, request: Request) -> list[dict]:
                 }
             )
         return payload
+
+
+@app.post("/campaigns/{campaign_slug}/sessions")
+def create_session(
+    campaign_slug: str,
+    payload: dict,
+    request: Request,
+) -> dict:
+    _validate_slug(campaign_slug, "campaign")
+    slug = (payload.get("slug") or "").strip()
+    title = (payload.get("title") or "").strip()
+    occurred_at_raw = (payload.get("occurred_at") or "").strip()
+    session_number = payload.get("session_number")
+    if not slug:
+        raise HTTPException(status_code=400, detail="Missing session slug")
+    _validate_slug(slug, "session")
+    if not title:
+        raise HTTPException(status_code=400, detail="Missing session title")
+    if not occurred_at_raw:
+        raise HTTPException(status_code=400, detail="Missing session date")
+    try:
+        occurred_at = _parse_iso_datetime(occurred_at_raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid session date") from exc
+
+    if session_number is None and slug.startswith("session_"):
+        try:
+            session_number = int(slug.split("_")[1])
+        except (ValueError, IndexError):
+            session_number = None
+
+    with get_session() as session:
+        campaign = _campaign_for_slug(session, campaign_slug, request)
+        _require_dm(session, campaign.id, request)
+        existing = (
+            session.query(Session)
+            .filter_by(campaign_id=campaign.id, slug=slug)
+            .first()
+        )
+        if existing:
+            raise HTTPException(status_code=409, detail="Session already exists")
+        session_obj = Session(
+            campaign_id=campaign.id,
+            slug=slug,
+            session_number=session_number,
+            title=title,
+            occurred_at=occurred_at,
+        )
+        session.add(session_obj)
+        session.flush()
+        return {
+            "id": session_obj.id,
+            "slug": session_obj.slug,
+            "session_number": session_obj.session_number,
+            "title": session_obj.title,
+            "occurred_at": session_obj.occurred_at.isoformat(),
+        }
 
 
 @app.get("/campaigns/{campaign_slug}/admin/metrics")

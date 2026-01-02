@@ -24,6 +24,12 @@ const elements = {
   userRole: document.getElementById("userRole"),
   sessionList: document.getElementById("sessionList"),
   sessionCount: document.getElementById("sessionCount"),
+  newSessionSlug: document.getElementById("newSessionSlug"),
+  newSessionTitle: document.getElementById("newSessionTitle"),
+  newSessionDate: document.getElementById("newSessionDate"),
+  newSessionNumber: document.getElementById("newSessionNumber"),
+  newSessionFile: document.getElementById("newSessionFile"),
+  createSessionButton: document.getElementById("createSessionButton"),
   statusLine: document.getElementById("statusLine"),
   sessionMeta: document.getElementById("sessionMeta"),
   runSelect: document.getElementById("runSelect"),
@@ -134,6 +140,28 @@ async function postJson(path, payload) {
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+async function uploadTranscript(campaignSlug, sessionSlug, file) {
+  const headers = {};
+  if (state.currentUserId) {
+    headers["X-User-Id"] = state.currentUserId;
+  }
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(
+    `${API_BASE}/campaigns/${campaignSlug}/sessions/${sessionSlug}/transcript`,
+    {
+      method: "POST",
+      headers,
+      body: form,
+    }
+  );
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Upload failed: ${response.status}`);
   }
   return response.json();
 }
@@ -904,6 +932,52 @@ async function loadCampaigns() {
   } catch (err) {
     setStatus("Unable to load campaigns. Set a user id if auth is enabled.");
     console.error(err);
+  }
+}
+
+async function createSessionFromForm() {
+  if (!state.selectedCampaign) {
+    setStatus("Select a campaign before creating a session.");
+    return;
+  }
+  const slug = elements.newSessionSlug.value.trim();
+  const title = elements.newSessionTitle.value.trim();
+  const occurredAt = elements.newSessionDate.value;
+  const numberRaw = elements.newSessionNumber.value;
+  if (!slug || !title || !occurredAt) {
+    setStatus("Session slug, title, and date are required.");
+    return;
+  }
+  const payload = { slug, title, occurred_at: occurredAt };
+  if (numberRaw) {
+    const num = Number.parseInt(numberRaw, 10);
+    if (Number.isFinite(num)) {
+      payload.session_number = num;
+    }
+  }
+  setStatus("Creating session...");
+  try {
+    const created = await postJson(`/campaigns/${state.selectedCampaign}/sessions`, payload);
+    const file = elements.newSessionFile.files?.[0];
+    if (file) {
+      setStatus("Uploading transcript...");
+      await uploadTranscript(state.selectedCampaign, slug, file);
+    }
+    elements.newSessionSlug.value = "";
+    elements.newSessionTitle.value = "";
+    elements.newSessionDate.value = "";
+    elements.newSessionNumber.value = "";
+    if (elements.newSessionFile) {
+      elements.newSessionFile.value = "";
+    }
+    await loadSessions();
+    if (created?.id) {
+      await loadSession(created.id);
+    }
+    setStatus("Session created.");
+  } catch (err) {
+    console.error(err);
+    setStatus("Failed to create session.");
   }
 }
 
@@ -1994,6 +2068,11 @@ async function init() {
         console.error(err);
         setStatus("Failed to save note.");
       }
+    });
+  }
+  if (elements.createSessionButton) {
+    elements.createSessionButton.addEventListener("click", async () => {
+      await createSessionFromForm();
     });
   }
   elements.runSelect.addEventListener("change", async (event) => {
